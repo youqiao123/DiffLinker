@@ -189,6 +189,7 @@ class MOADDataset(Dataset):
                 np.zeros_like(pocket_charges),
                 np.zeros_like(link_charges)
             ])
+            
             pocket_mask = np.concatenate([
                 np.zeros_like(frag_charges),
                 np.ones_like(pocket_charges),
