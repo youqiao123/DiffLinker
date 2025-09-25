@@ -6,6 +6,23 @@ import torch.nn as nn
 from src import utils
 from pdb import set_trace
 
+'''
+Graph Convolution Layer
+
+input_nf: 输入节点特征的维度 node feature dimension
+output_nf: 输出节点特征的维度 node feature dimension after one GCL layer
+hidden_nf: 中间层的维度 hidden dimension
+normalization_factor: 用于对聚合操作进行归一化的因子 normalization factor for the aggregation
+aggregation_method: 聚合方法，可以是'sum'或'mean' 
+activation: 激活函数 activation function
+edges_in_d: 边特征的维度 
+nodes_att_dim: 节点注意力特征的维度 
+attention: 是否使用注意力机制 
+normalization: 是否使用归一化方法，如'batch_norm' 
+
+edge_mlp: 用于更新边特征的多层感知机
+node_mlp: 用于更新节点特征的多层感知机 
+'''
 
 class GCL(nn.Module):
     def __init__(self, input_nf, output_nf, hidden_nf, normalization_factor, aggregation_method, activation,
@@ -56,7 +73,7 @@ class GCL(nn.Module):
             out = mij
 
         if edge_mask is not None:
-            out = out * edge_mask
+            out = out * edge_mask # 逐元素相乘
         return out, mij
 
     def node_model(self, x, edge_index, edge_attr, node_attr):
@@ -79,6 +96,34 @@ class GCL(nn.Module):
             h = h * node_mask
         return h, mij
 
+
+'''
+EquivariantUpdate:
+这个类用于实现等变更新
+
+具体如何实现等边更新：
+
+1. 输入特征的构造
+input_tensor = torch.cat([h[row], h[col], edge_attr], dim=1)
+其中，h[row]和h[col]分别表示边的起始节点和终止节点的特征，edge_attr表示边的属性特征。
+节点特征和边特征的拼接不会破坏等变性，因为这些特征与坐标的平移和旋转无关
+
+2. 坐标差值的使用
+trans = coord_diff * self.coord_mlp(input_tensor)
+coord_diff是边的起点坐标与重点坐标的差值，是一个方向向量，表示边的几何信息
+coord_diff = c[row] - c[col]
+坐标差值对于平移操作不变，对于旋转操作也不变
+
+3. 坐标更新值的计算
+trans = coord_diff * self.coord_mlp(input_tensor)
+
+    self.coord_mlp: 是一个多层感知机，输入是拼接后的特征input_tensor(拼接两个node特征和一个edge特征)，
+    输出是一个标量，表示边的权重
+
+    更新值: 坐标更新值时边的权重与坐标差值的乘积
+
+    等变性保证: 平移时，coord_diff对平移不变；旋转时，coord_diff和trans都会随旋转矩阵R一起旋转
+'''
 
 class EquivariantUpdate(nn.Module):
     def __init__(self, hidden_nf, normalization_factor, aggregation_method,
@@ -117,13 +162,26 @@ class EquivariantUpdate(nn.Module):
         return coord
 
     def forward(
-            self, h, coord, edge_index, coord_diff, edge_attr=None, linker_mask=None, node_mask=None, edge_mask=None
+        self, h, coord, edge_index, coord_diff, edge_attr=None, linker_mask=None, node_mask=None, edge_mask=None
     ):
         coord = self.coord_model(h, coord, edge_index, coord_diff, edge_attr, edge_mask, linker_mask)
         if node_mask is not None:
             coord = coord * node_mask
         return coord
 
+'''
+EquivariantBlock: 结合了多个GCL层和一个EquivariantUpdate层的模块
+参数说明: 
+edge_feat_nf: 边特征的维度，默认为 2
+activation: 激活函数，默认为 SiLU
+n_layers: 图卷积层的数量
+coords_range: 坐标更新的范围
+norm_constant: 用于坐标差值归一化的常数
+
+主要功能:
+1. 节点特征更新: 使用多个 GCL 层，逐层更新节点的特征
+2. 坐标更新: 使用 EquivariantUpdate 层，基于更新后的节点特征和边的几何信息，更新节点的坐标，同时保证等变性
+'''
 
 class EquivariantBlock(nn.Module):
     def __init__(self, hidden_nf, edge_feat_nf=2, device='cpu', activation=nn.SiLU(), n_layers=2, attention=True,
@@ -140,6 +198,7 @@ class EquivariantBlock(nn.Module):
         self.normalization_factor = normalization_factor
         self.aggregation_method = aggregation_method
 
+        # "gcl_%d" % i 这里的%d是一个占位符，表示将一个整数i插入到字符串中
         for i in range(0, n_layers):
             self.add_module("gcl_%d" % i, GCL(self.hidden_nf, self.hidden_nf, self.hidden_nf, edges_in_d=edge_feat_nf,
                                               activation=activation, attention=attention,
@@ -177,7 +236,7 @@ class EquivariantBlock(nn.Module):
             h = h * node_mask
         return h, x
 
-
+# 由多个 EquivariantBlock 组成的网络
 class EGNN(nn.Module):
     def __init__(self, in_node_nf, in_edge_nf, hidden_nf, device='cpu', activation=nn.SiLU(), n_layers=3, attention=False,
                  norm_diff=True, out_node_nf=None, tanh=False, coords_range=15, norm_constant=1, inv_sublayers=2,
@@ -238,6 +297,7 @@ class EGNN(nn.Module):
         return h, x
 
 
+# 多个 GCL 组成的网络
 class GNN(nn.Module):
     def __init__(self, in_node_nf, in_edge_nf, hidden_nf, aggregation_method='sum', device='cpu',
                  activation=nn.SiLU(), n_layers=4, attention=False, normalization_factor=1,
@@ -277,7 +337,9 @@ class GNN(nn.Module):
             h = h * node_mask
         return h
 
-
+'''
+正弦嵌入
+'''
 class SinusoidsEmbeddingNew(nn.Module):
     def __init__(self, max_res=15., min_res=15. / 2000., div_factor=4):
         super().__init__()
@@ -319,7 +381,18 @@ def unsorted_segment_sum(data, segment_ids, num_segments, normalization_factor, 
         result = result / norm
     return result
 
+'''
+Dynamics用于在 全连接图(FC) 上对带有坐标与节点特征的分子/粒子系统进行一次前向“动力学更新”。
+其核心是将输入的节点坐标 x ∈ R^{B x N x 3} 与节点特征 h ∈ R^{B x N x nf}（可附加时间与上下文特征）
+经过 EGNN 或普通 GNN 的传播，得到：
+    速度(或位移增量)vel ∈ R^{B x N x 3}（表示坐标的更新量），以及
+    更新后的节点特征 h_final ∈ R^{B x N x nf},
 
+并最终返回拼接后的张量 cat([vel, h_final], dim=2) ∈ R^{B x N x (3+nf)}
+
+Dynamics 模块在扩散模型(diffusion models)尤其是用于 3D 分子 / 几何结构生成的扩散模型中，是一个常见而且合理的构建方式
+
+'''
 class Dynamics(nn.Module):
     def __init__(
             self, n_dims, in_node_nf, context_node_nf, hidden_nf=64, device='cpu', activation=nn.SiLU(),
