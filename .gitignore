@@ -7,3 +7,4 @@ formatted
 ._.DS_Store
 .idea
 __pycache__
+test*
