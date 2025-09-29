@@ -151,7 +151,7 @@ mkdir -p logs
 
 Run trainig:
 ```shell
-python -W ignore train_difflinker.py --config configs/zinc_difflinker.yml
+python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml
 ```
 
 ### Training Size GNN

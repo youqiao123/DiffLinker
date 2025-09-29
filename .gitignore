@@ -8,3 +8,4 @@ formatted
 .idea
 __pycache__
 test*
+slurm*

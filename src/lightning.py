@@ -64,6 +64,9 @@ class DDPM(pl.LightningModule):
         self.center_of_mass = center_of_mass
         self.inpainting = inpainting
         self.loss_type = diffusion_loss_type
+        self._train_step_outputs = []
+        self._val_step_outputs = []
+        self._test_step_outputs = []
 
         self.n_dims = n_dims
         self.num_classes = in_node_nf - include_charges
@@ -221,8 +224,14 @@ class DDPM(pl.LightningModule):
         }
         if self.log_iterations is not None and self.global_step % self.log_iterations == 0:
             for metric_name, metric in training_metrics.items():
-                self.metrics.setdefault(f'{metric_name}/train', []).append(metric)
-                self.log(f'{metric_name}/train', metric, prog_bar=True)
+                metric_value = metric.detach().cpu() if isinstance(metric, torch.Tensor) else metric
+                self.metrics.setdefault(f'{metric_name}/train', []).append(metric_value)
+                self.log(f'{metric_name}/train', metric_value, prog_bar=True)
+        detached_metrics = {
+            metric_name: metric.detach().cpu() if isinstance(metric, torch.Tensor) else metric
+            for metric_name, metric in training_metrics.items()
+        }
+        self._train_step_outputs.append(detached_metrics)
         return training_metrics
 
     def validation_step(self, data, *args):
@@ -234,7 +243,7 @@ class DDPM(pl.LightningModule):
             loss = vlb_loss
         else:
             raise NotImplementedError(self.loss_type)
-        return {
+        validation_metrics = {
             'loss': loss,
             'delta_log_px': delta_log_px,
             'kl_prior': kl_prior,
@@ -245,6 +254,9 @@ class DDPM(pl.LightningModule):
             'noise_t': noise_t,
             'noise_0': noise_0
         }
+        detached_metrics = self._detach_metrics(validation_metrics)
+        self._val_step_outputs.append(detached_metrics)
+        return validation_metrics
 
     def test_step(self, data, *args):
         delta_log_px, kl_prior, loss_term_t, loss_term_0, l2_loss, noise_t, noise_0 = self.forward(data, training=False)
@@ -255,7 +267,7 @@ class DDPM(pl.LightningModule):
             loss = vlb_loss
         else:
             raise NotImplementedError(self.loss_type)
-        return {
+        test_metrics = {
             'loss': loss,
             'delta_log_px': delta_log_px,
             'kl_prior': kl_prior,
@@ -266,18 +278,52 @@ class DDPM(pl.LightningModule):
             'noise_t': noise_t,
             'noise_0': noise_0
         }
+        detached_metrics = self._detach_metrics(test_metrics)
+        self._test_step_outputs.append(detached_metrics)
+        return test_metrics
 
-    def training_epoch_end(self, training_step_outputs):
-        for metric in training_step_outputs[0].keys():
-            avg_metric = self.aggregate_metric(training_step_outputs, metric)
+    # def training_epoch_end(self, training_step_outputs):
+    #     for metric in training_step_outputs[0].keys():
+    #         avg_metric = self.aggregate_metric(training_step_outputs, metric)
+    #         self.metrics.setdefault(f'{metric}/train', []).append(avg_metric)
+    #         self.log(f'{metric}/train', avg_metric, prog_bar=True)
+
+    def on_train_epoch_end(self):
+        if not self._train_step_outputs:
+            return
+        for metric in self._train_step_outputs[0].keys():
+            avg_metric = self.aggregate_metric(self._train_step_outputs, metric)
             self.metrics.setdefault(f'{metric}/train', []).append(avg_metric)
             self.log(f'{metric}/train', avg_metric, prog_bar=True)
+        self._train_step_outputs.clear()
 
-    def validation_epoch_end(self, validation_step_outputs):
-        for metric in validation_step_outputs[0].keys():
-            avg_metric = self.aggregate_metric(validation_step_outputs, metric)
+    # def validation_epoch_end(self, validation_step_outputs):
+    #     for metric in validation_step_outputs[0].keys():
+    #         avg_metric = self.aggregate_metric(validation_step_outputs, metric)
+    #         self.metrics.setdefault(f'{metric}/val', []).append(avg_metric)
+    #         self.log(f'{metric}/val', avg_metric, prog_bar=True)
+
+    #     if (self.current_epoch + 1) % self.test_epochs == 0:
+    #         sampling_results = self.sample_and_analyze(self.val_dataloader())
+    #         for metric_name, metric_value in sampling_results.items():
+    #             self.log(f'{metric_name}/val', metric_value, prog_bar=True)
+    #             self.metrics.setdefault(f'{metric_name}/val', []).append(metric_value)
+
+    #         # Logging the results corresponding to the best validation_and_connectivity
+    #         best_metrics, best_epoch = self.compute_best_validation_metrics()
+    #         self.log('best_epoch', int(best_epoch), prog_bar=True, batch_size=self.batch_size)
+    #         for metric, value in best_metrics.items():
+    #             self.log(f'best_{metric}', value, prog_bar=True, batch_size=self.batch_size)
+
+    def on_validation_epoch_end(self):
+        if not self._val_step_outputs:
+            return
+        for metric in self._val_step_outputs[0].keys():
+            avg_metric = self.aggregate_metric(self._val_step_outputs, metric)
             self.metrics.setdefault(f'{metric}/val', []).append(avg_metric)
             self.log(f'{metric}/val', avg_metric, prog_bar=True)
+
+        self._val_step_outputs.clear()
 
         if (self.current_epoch + 1) % self.test_epochs == 0:
             sampling_results = self.sample_and_analyze(self.val_dataloader())
@@ -291,11 +337,27 @@ class DDPM(pl.LightningModule):
             for metric, value in best_metrics.items():
                 self.log(f'best_{metric}', value, prog_bar=True, batch_size=self.batch_size)
 
-    def test_epoch_end(self, test_step_outputs):
-        for metric in test_step_outputs[0].keys():
-            avg_metric = self.aggregate_metric(test_step_outputs, metric)
+    # def test_epoch_end(self, test_step_outputs):
+    #     for metric in test_step_outputs[0].keys():
+    #         avg_metric = self.aggregate_metric(test_step_outputs, metric)
+    #         self.metrics.setdefault(f'{metric}/test', []).append(avg_metric)
+    #         self.log(f'{metric}/test', avg_metric, prog_bar=True)
+
+    #     if (self.current_epoch + 1) % self.test_epochs == 0:
+    #         sampling_results = self.sample_and_analyze(self.test_dataloader())
+    #         for metric_name, metric_value in sampling_results.items():
+    #             self.log(f'{metric_name}/test', metric_value, prog_bar=True)
+    #             self.metrics.setdefault(f'{metric_name}/test', []).append(metric_value)
+
+    def on_test_epoch_end(self):
+        if not self._test_step_outputs:
+            return
+        for metric in self._test_step_outputs[0].keys():
+            avg_metric = self.aggregate_metric(self._test_step_outputs, metric)
             self.metrics.setdefault(f'{metric}/test', []).append(avg_metric)
             self.log(f'{metric}/test', avg_metric, prog_bar=True)
+
+        self._test_step_outputs.clear()
 
         if (self.current_epoch + 1) % self.test_epochs == 0:
             sampling_results = self.sample_and_analyze(self.test_dataloader())
@@ -476,5 +538,25 @@ class DDPM(pl.LightningModule):
         return best_metrics, best_epoch
 
     @staticmethod
+    def _detach_metrics(metrics):
+        detached = {}
+        for metric_name, metric in metrics.items():
+            if isinstance(metric, torch.Tensor):
+                metric = metric.detach().cpu()
+                if metric.numel() == 1:
+                    metric = metric.item()
+            detached[metric_name] = metric
+        return detached
+
+    # @staticmethod
+    # def aggregate_metric(step_outputs, metric):
+    #     return torch.tensor([out[metric] for out in step_outputs]).mean()
+
+    @staticmethod
     def aggregate_metric(step_outputs, metric):
-        return torch.tensor([out[metric] for out in step_outputs]).mean()
+        values = [out[metric] for out in step_outputs]
+        first_value = values[0]
+        if isinstance(first_value, torch.Tensor):
+            stacked = torch.stack(values)
+            return stacked.mean(dim=0)
+        return torch.tensor(values).mean()

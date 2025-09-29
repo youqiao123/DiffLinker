@@ -11,6 +11,7 @@ from src.const import NUMBER_OF_ATOM_TYPES, GEOM_NUMBER_OF_ATOM_TYPES
 from src.lightning import DDPM
 from src.utils import disable_rdkit_logging, set_deterministic, Logger
 
+import wandb
 
 def find_last_checkpoint(checkpoints_dir):
     epoch2fname = [
@@ -45,6 +46,8 @@ def main(args):
         id=experiment,
         resume='must' if args.resume is not None else 'allow',
         entity=args.wandb_entity,
+        offline=False,
+        # settings=wandb.Settings(init_timeout=120, start_method="thread")
     )
 
     is_geom = ('geom' in args.train_data_prefix) or ('MOAD' in args.train_data_prefix)

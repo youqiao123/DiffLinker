@@ -1,7 +1,7 @@
-exp_name: 'pockets_difflinker_pdbbind_0'
+exp_name: 'pockets_difflinker_pdbbind'
 data: /home/qianyouqiao/protac/pdbbind_processed
-train_data_prefix: MOAD_train.full
-val_data_prefix: MOAD_val.full
+train_data_prefix: pdbbind_train.full
+val_data_prefix: pdbbind_val.full
 checkpoints: models
 logs: logs
 device: gpu
