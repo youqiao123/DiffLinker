@@ -50,7 +50,9 @@ def run(ligands_dir, output_table, output_conformers):
             if mol is None:
                 continue
 
+            # 为什么要加这一步筛选？是怕分子量太大导致fragmentation时间过长吗？
             if mol.GetNumAtoms() <= 40 and mol.GetRingInfo().NumRings() >= 2:
+            # if mol:
                 try:
                     res = fragment_by_mmpa(
                         mol,
