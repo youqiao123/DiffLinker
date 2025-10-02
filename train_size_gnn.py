@@ -42,7 +42,10 @@ def main(args):
     sys.stdout = Logger(logpath=os.path.join(args.logs, "general_logs", run_name, f'log.log'), syspart=sys.stdout)
     sys.stderr = Logger(logpath=os.path.join(args.logs, "general_logs", run_name, f'log.log'), syspart=sys.stderr)
 
-    is_geom = 'geom' in args.train_data_prefix
+    is_geom = any(
+        token in args.train_data_prefix
+        for token in ('geom', 'MOAD', 'pdbbind')
+    )
     loss_weights = None
 
     if is_geom:

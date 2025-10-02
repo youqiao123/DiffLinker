@@ -60,7 +60,11 @@ class ZincDataset(Dataset):
         fragments_path = os.path.join(data_path, f'{prefix}_frag.sdf')
         linkers_path = os.path.join(data_path, f'{prefix}_link.sdf')
 
-        is_geom = ('geom' in prefix) or ('MOAD' in prefix)
+        is_geom = (
+            ('geom' in prefix)
+            or ('MOAD' in prefix)
+            or ('pdbbind' in prefix)
+        )
         is_multifrag = 'multifrag' in prefix
 
         table = pd.read_csv(table_path)
@@ -149,7 +153,7 @@ class MOADDataset(Dataset):
         )
         for (_, row), fragments, linker, pocket_data in generator:
             pdb = row['molecule_name'].split('_')[0]
-            if pdb in {
+            if 'MOAD' in prefix.upper() and pdb in {
                 '5ou2', '5ou3', '6hay',
                 '5mo8', '5mo5', '5mo7', '5ctp', '5cu2', '5cu4', '5mmr', '5mmf',
                 '5moe', '3iw7', '4i9n', '3fi2', '3fi3',

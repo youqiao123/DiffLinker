@@ -50,7 +50,11 @@ def main(args):
         # settings=wandb.Settings(init_timeout=120, start_method="thread")
     )
 
-    is_geom = ('geom' in args.train_data_prefix) or ('MOAD' in args.train_data_prefix)
+    is_geom = (
+        ('geom' in args.train_data_prefix)
+        or ('MOAD' in args.train_data_prefix)
+        or ('pdbbind' in args.train_data_prefix)
+    )
     number_of_atoms = GEOM_NUMBER_OF_ATOM_TYPES if is_geom else NUMBER_OF_ATOM_TYPES
     in_node_nf = number_of_atoms + args.include_charges
     anchors_context = not args.remove_anchors_context

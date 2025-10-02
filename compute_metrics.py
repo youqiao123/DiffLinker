@@ -344,10 +344,9 @@ elif method == 'diffusion' and data_set in ['MOAD', 'pdbbind']:
     # Use SMILES of test set generated for molecules processed by OpenBabel
     # (for consistency with other evaluation metrics)
     # Because SMILES produced by our model are also based on OpenBabel
-    
-    # TODO: 要改成pdbbind的路径
-    true_smi_path = 'datasets/MOAD_test_smiles.smi'
-    true_mol_path = 'datasets/MOAD_test_molecules.sdf'
+    prefix = 'MOAD' if data_set == 'MOAD' else 'pdbbind'
+    true_smi_path = f'datasets/{prefix}_test_smiles.smi'
+    true_mol_path = f'datasets/{prefix}_test_molecules.sdf'
     true_smi = pd.read_csv(true_smi_path, sep=' ', names=['mol', 'frag']).mol.values
     true_mol_3d = Chem.SDMolSupplier(true_mol_path)
     true_smi2mol3d = dict(zip(true_smi, true_mol_3d))
