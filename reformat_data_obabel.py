@@ -113,7 +113,7 @@ def reformat(samples, dataset, true_smiles_path, checkpoint, formatted, linker_s
     print(f'Sampled molecules will be saved to {out_sdf_path}')
 
     true_smiles_table = pd.read_csv(true_smiles_path, sep=' ', names=['molecule', 'fragments'])
-    if 'MOAD' in dataset:
+    if 'MOAD' or 'pdbbind' in dataset:
         import numpy as np
         uuids = np.loadtxt(os.path.join(formatted, dataset.split('.')[0], 'uuids.txt'), dtype=int)
         idx2true_mol_smi = dict(zip(uuids, true_smiles_table.molecule.values))

@@ -73,7 +73,7 @@ class DDPM(pl.LightningModule):
         self.include_charges = include_charges
         self.anchors_context = anchors_context
 
-        self.is_geom = ('geom' in self.train_data_prefix) or ('MOAD' in self.train_data_prefix)
+        self.is_geom = ('geom' in self.train_data_prefix) or ('MOAD' in self.train_data_prefix) or ('pdbbind' in self.train_data_prefix)
 
         if graph_type is None:
             graph_type = '4A' if '.' in train_data_prefix else 'FC'
@@ -118,7 +118,7 @@ class DDPM(pl.LightningModule):
     def setup(self, stage: Optional[str] = None):
         dataset_type = MOADDataset if '.' in self.train_data_prefix else ZincDataset
         if stage == 'fit':
-            self.is_geom = ('geom' in self.train_data_prefix) or ('MOAD' in self.train_data_prefix)
+            self.is_geom = ('geom' in self.train_data_prefix) or ('MOAD' in self.train_data_prefix) or ('pdbbind' in self.train_data_prefix)
             self.train_dataset = dataset_type(
                 data_path=self.data_path,
                 prefix=self.train_data_prefix,
@@ -130,7 +130,7 @@ class DDPM(pl.LightningModule):
                 device=self.torch_device
             )
         elif stage == 'val':
-            self.is_geom = ('geom' in self.val_data_prefix) or ('MOAD' in self.val_data_prefix)
+            self.is_geom = ('geom' in self.val_data_prefix) or ('MOAD' in self.val_data_prefix) or ('pdbbind' in self.train_data_prefix)
             self.val_dataset = dataset_type(
                 data_path=self.data_path,
                 prefix=self.val_data_prefix,
@@ -552,11 +552,29 @@ class DDPM(pl.LightningModule):
     # def aggregate_metric(step_outputs, metric):
     #     return torch.tensor([out[metric] for out in step_outputs]).mean()
 
+    # @staticmethod
+    # def aggregate_metric(step_outputs, metric):
+    #     values = [out[metric] for out in step_outputs]
+    #     first_value = values[0]
+    #     if isinstance(first_value, torch.Tensor):
+    #         stacked = torch.stack(values)
+    #         return stacked.mean(dim=0)
+    #     return torch.tensor(values).mean()
+
     @staticmethod
     def aggregate_metric(step_outputs, metric):
-        values = [out[metric] for out in step_outputs]
-        first_value = values[0]
-        if isinstance(first_value, torch.Tensor):
-            stacked = torch.stack(values)
-            return stacked.mean(dim=0)
-        return torch.tensor(values).mean()
+        values = [out[metric] for out in step_outputs if metric in out]
+        if not values:
+            return torch.tensor(0.0)
+
+        tensors = []
+        for v in values:
+            if isinstance(v, torch.Tensor):
+                v = v.detach()
+                if v.numel() != 1:
+                    v = v.mean()
+            else:  # float or int
+                v = torch.tensor(v, dtype=torch.float32)
+            tensors.append(v.reshape(()))
+
+        return torch.stack(tensors).mean()
