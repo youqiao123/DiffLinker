@@ -254,6 +254,7 @@ python -W ignore reformat_data_obabel.py \
 
 Then you can run evaluation scripts:
 ```shell
+export WANDB_MODE=disabled
 python -W ignore compute_metrics.py \
                  ZINC \
                  formatted/zinc_difflinker/sampled_size/zinc_size_gnn/zinc_final_test.smi \

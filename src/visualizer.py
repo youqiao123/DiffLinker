@@ -155,9 +155,9 @@ def plot_data3d(positions, atom_type, is_geom, camera_elev=0, camera_azim=0, sav
     ax._axis3don = False
 
     if bg == 'black':
-        ax.w_xaxis.line.set_color("black")
+        ax.xaxis.line.set_color("black")
     else:
-        ax.w_xaxis.line.set_color("white")
+        ax.xaxis.line.set_color("white")
 
     plot_molecule(
         ax, positions, atom_type, alpha, spheres_3d, hex_bg_color, is_geom=is_geom, fragment_mask=fragment_mask
