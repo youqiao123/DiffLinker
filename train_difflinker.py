@@ -13,6 +13,8 @@ from src.utils import disable_rdkit_logging, set_deterministic, Logger
 
 import wandb
 
+wandb.init(mode="offline")
+
 def find_last_checkpoint(checkpoints_dir):
     epoch2fname = [
         (int(fname.split('=')[1].split('.')[0]), fname)

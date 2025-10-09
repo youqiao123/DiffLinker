@@ -9,3 +9,4 @@ formatted
 __pycache__
 test*
 slurm*
+wandb
