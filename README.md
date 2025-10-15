@@ -269,6 +269,17 @@ python -W ignore compute_metrics.py \
 ```
 All the metrics will be saved in the directory `./formatted`.
 
+```shell
+python evaluate_ckpt.py \
+                 --checkpoint models/pdbbind_1.ckpt \
+                 --dataset-name pdbbind \
+                 --dataset-prefix pdbbind_test.full \
+                #  --experiment-name pdbbind_2 \ 一般不需要设置experiment-name，除非想再采样一次来评估。加之
+                 --test-table datasets/pdbbind_test_table.csv \
+                 --train-linkers-sdf datasets/pdbbind_train_link.sdf
+```
+
+
 # Reference
 
 > Igashov, I., Stärk, H., Vignac, C. et al. Equivariant 3D-conditional diffusion model for molecular linker design. Nat Mach Intell (2024). https://doi.org/10.1038/s42256-024-00815-9
