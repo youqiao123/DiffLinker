@@ -346,7 +346,8 @@ elif method == 'diffusion' and data_set in ['MOAD', 'pdbbind']:
     # Because SMILES produced by our model are also based on OpenBabel
     prefix = 'MOAD' if data_set == 'MOAD' else 'pdbbind'
     true_smi_path = f'datasets/{prefix}_test_smiles.smi'
-    true_mol_path = f'datasets/{prefix}_test_molecules.sdf'
+    # true_mol_path = f'datasets/{prefix}_test_molecules.sdf'
+    true_mol_path = f'datasets/{prefix}_test_mol.sdf'
     true_smi = pd.read_csv(true_smi_path, sep=' ', names=['mol', 'frag']).mol.values
     true_mol_3d = Chem.SDMolSupplier(true_mol_path)
     true_smi2mol3d = dict(zip(true_smi, true_mol_3d))

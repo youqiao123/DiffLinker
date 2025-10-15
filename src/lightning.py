@@ -554,27 +554,35 @@ class DDPM(pl.LightningModule):
 
     # @staticmethod
     # def aggregate_metric(step_outputs, metric):
-    #     values = [out[metric] for out in step_outputs]
-    #     first_value = values[0]
-    #     if isinstance(first_value, torch.Tensor):
-    #         stacked = torch.stack(values)
-    #         return stacked.mean(dim=0)
-    #     return torch.tensor(values).mean()
+    #     values = [out[metric] for out in step_outputs if metric in out]
+    #     if not values:
+    #         return torch.tensor(0.0)
+
+    #     tensors = []
+    #     for v in values:
+    #         if isinstance(v, torch.Tensor):
+    #             v = v.detach()
+    #             if v.numel() != 1:
+    #                 v = v.mean()
+    #         else:  # float or int
+    #             v = torch.tensor(v, dtype=torch.float32)
+    #         tensors.append(v.reshape(()))
+
+    #     return torch.stack(tensors).mean()
 
     @staticmethod
     def aggregate_metric(step_outputs, metric):
-        values = [out[metric] for out in step_outputs if metric in out]
-        if not values:
-            return torch.tensor(0.0)
-
         tensors = []
-        for v in values:
+        for out in step_outputs:
+            v = out[metric]
             if isinstance(v, torch.Tensor):
-                v = v.detach()
                 if v.numel() != 1:
                     v = v.mean()
-            else:  # float or int
-                v = torch.tensor(v, dtype=torch.float32)
-            tensors.append(v.reshape(()))
+                tensors.append(v)
+            else:
+                tensors.append(torch.tensor(v, dtype=torch.float32))
 
-        return torch.stack(tensors).mean()
+        if not tensors:
+            return torch.tensor(0.0)
+
+        return torch.stack(tensors).mean().detach()

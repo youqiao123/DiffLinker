@@ -182,6 +182,7 @@ There are the distributions of numbers of atoms in linkers used for training lin
 <img src="resources/linker_size_distributions.png">
 
 ### Sampling
+> pockets_difflinker_pdbbind_qianyouqiao_pockets_difflinker_pdbbind_bs32_date04-10_time16-52-37.487243_epoch=999.ckpt  
 
 First, download test dataset:
 ```shell
@@ -209,19 +210,21 @@ python -W ignore sample.py \
                  --linker_size_model models/zinc_size_gnn.ckpt \
                  --samples samples \
                  --data datasets \
-                 --prefix zinc_final_test \
+                 --prefix pdbbind_test.full \
                  --n_samples 2 \
                  --device cuda:0
 ```
 You will be able to see `.xyz` files of the generated molecules in the directory `./samples`.
 
+如果对已有的数据集进行采样，则不需要提供linker_size_model，默认会使用数据集中真实的linker_size
+
 If you want to sample linkers and save trajectories, run the following:
 ```shell
 python -W ignore sample_trajectories.py \
-                 --checkpoint models/zinc_difflinker.ckpt \
+                 --checkpoint models/pdbbind_1.ckpt \
                  --chains trajectories \
                  --data datasets \
-                 --prefix zinc_final_test \
+                 --prefix pdbbind_test \
                  --keep_frames 10 \
                  --device cuda:0
 ```
@@ -245,21 +248,22 @@ Next, you need to run OpenBabel to reformat the data:
 mkdir -p formatted
 python -W ignore reformat_data_obabel.py \
                  --samples samples \
-                 --dataset zinc_final_test \
-                 --true_smiles_path datasets/zinc_final_test_smiles.smi \
-                 --checkpoint zinc_difflinker \
+                 --dataset pdbbind_test.full \
+                 --true_smiles_path datasets/pdbbind_test_smiles.smi \
+                 --checkpoint pdbbind_1 \
                  --formatted formatted \
-                 --linker_size_model_name zinc_size_gnn
 ```
 
 Then you can run evaluation scripts:
 ```shell
 export WANDB_MODE=disabled
 python -W ignore compute_metrics.py \
-                 ZINC \
-                 formatted/zinc_difflinker/sampled_size/zinc_size_gnn/zinc_final_test.smi \
-                 datasets/zinc_final_train_linkers.smi \
-                 5 1 None \
+                 pdbbind \
+                 formatted/pdbbind_1/pdbbind_test.full.smi \
+                 datasets/pdbbind_train_link.smi \
+                 8 \
+                 True \
+                 100 \
                  resources/wehi_pains.csv \
                  diffusion
 ```
