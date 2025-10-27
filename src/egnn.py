@@ -208,10 +208,10 @@ class EquivariantBlock(nn.Module):
                                                        coords_range=self.coords_range_layer,
                                                        normalization_factor=self.normalization_factor,
                                                        aggregation_method=self.aggregation_method))
-        if torch.cuda.is_available():
-            self.to(self.device)
-        else:
-            self.to('cpu')
+        # if torch.cuda.is_available():
+        #     self.to(self.device)
+        # else:
+        #     self.to('cpu')
 
     def forward(self, h, x, edge_index, node_mask=None, linker_mask=None, edge_mask=None, edge_attr=None):
         # Edit Emiel: Remove velocity as input
@@ -269,10 +269,10 @@ class EGNN(nn.Module):
                                                                sin_embedding=self.sin_embedding,
                                                                normalization_factor=self.normalization_factor,
                                                                aggregation_method=self.aggregation_method))
-        if torch.cuda.is_available():
-            self.to(self.device)
-        else:
-            self.to('cpu')
+        # if torch.cuda.is_available():
+        #     self.to(self.device)
+        # else:
+        #     self.to('cpu')
 
     def forward(self, h, x, edge_index, node_mask=None, linker_mask=None, edge_mask=None):
         # Edit Emiel: Remove velocity as input
@@ -320,10 +320,10 @@ class GNN(nn.Module):
                 edges_in_d=in_edge_nf, activation=activation,
                 attention=attention, normalization=normalization))
 
-        if torch.cuda.is_available():
-            self.to(self.device)
-        else:
-            self.to('cpu')
+        # if torch.cuda.is_available():
+        #     self.to(self.device)
+        # else:
+        #     self.to('cpu')
 
     def forward(self, h, edges, edge_attr=None, node_mask=None, edge_mask=None):
         # Edit Emiel: Remove velocity as input
@@ -456,7 +456,7 @@ class Dynamics(nn.Module):
         assert self.graph_type == 'FC'
 
         bs, n_nodes = xh.shape[0], xh.shape[1]
-        edges = self.get_edges(n_nodes, bs)  # (2, B*N)
+        edges = self.get_edges(n_nodes, bs, xh_device=xh.device)  # (2, B*N)
         node_mask = node_mask.view(bs * n_nodes, 1)  # (B*N, 1)
 
         if linker_mask is not None:
@@ -519,7 +519,7 @@ class Dynamics(nn.Module):
 
         return torch.cat([vel, h_final], dim=2)
 
-    def get_edges(self, n_nodes, batch_size):
+    def get_edges(self, n_nodes, batch_size, xh_device=None):
         if n_nodes in self.edge_cache:
             edges_dic_b = self.edge_cache[n_nodes]
             if batch_size in edges_dic_b:
@@ -532,7 +532,8 @@ class Dynamics(nn.Module):
                         for j in range(n_nodes):
                             rows.append(i + batch_idx * n_nodes)
                             cols.append(j + batch_idx * n_nodes)
-                edges = [torch.LongTensor(rows).to(self.device), torch.LongTensor(cols).to(self.device)]
+                # edges = [torch.LongTensor(rows).to(self.device), torch.LongTensor(cols).to(self.device)]
+                edges = [torch.LongTensor(rows).to(xh_device), torch.LongTensor(cols).to(xh_device)]
                 edges_dic_b[batch_size] = edges
                 return edges
         else:

@@ -40,7 +40,9 @@ def main(args):
     samples_dir = os.path.join(args.logs, 'samples', experiment)
 
     set_deterministic(args.seed)
-    torch_device = 'cuda:0' if args.device == 'gpu' else 'cpu'
+
+    # TODO: 修改所有device
+    # torch_device = 'cuda:0' if args.device == 'gpu' else 'cpu'
     wandb_logger = loggers.WandbLogger(
         save_dir=args.logs,
         project='e3_ddpm_linker_design',
@@ -89,7 +91,8 @@ def main(args):
         include_charges=args.include_charges,
         lr=args.lr,
         batch_size=args.batch_size,
-        torch_device=torch_device,
+        # torch_device=torch_device,
+        torch_device=None,  # NOTE: 我这里把device改成None，看看会不会报错
         model=args.model,
         test_epochs=args.test_epochs,
         n_stability_samples=args.n_stability_samples,
@@ -112,10 +115,11 @@ def main(args):
         max_epochs=args.n_epochs,
         logger=wandb_logger,
         callbacks=checkpoint_callback,
-        accelerator=args.device,
-        devices=1,
+        accelerator='gpu',
+        devices='auto',
         num_sanity_val_steps=0,
         enable_progress_bar=args.enable_progress_bar,
+        strategy='ddp',
     )
 
     if args.resume is None:
@@ -181,7 +185,7 @@ if __name__ == '__main__':
     p.add_argument('--no-cuda', action='store_true', default=False,  help='enables CUDA training')
     p.add_argument('--save_model', type=eval, default=True, help='save model')
     p.add_argument('--generate_epochs', type=int, default=1,help='save model')
-    p.add_argument('--num_workers', type=int, default=0, help='Number of worker for the dataloader')
+    p.add_argument('--num_workers', type=int, default=8, help='Number of worker for the dataloader')
     p.add_argument('--test_epochs', type=int, default=1)
     p.add_argument('--data_augmentation', type=eval, default=False, help='use attention in the EGNN')
     p.add_argument("--conditioning", nargs='+', default=[], help='arguments : homo | lumo | alpha | gap | mu | Cv')

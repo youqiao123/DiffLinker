@@ -152,6 +152,7 @@ mkdir -p logs
 Run trainig:
 ```shell
 python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml
+slurm_submit -n diff -p gpu -c 24 -g 2 'python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml'
 ```
 
 ### Training Size GNN

@@ -122,22 +122,36 @@ class DDPM(pl.LightningModule):
             self.train_dataset = dataset_type(
                 data_path=self.data_path,
                 prefix=self.train_data_prefix,
-                device=self.torch_device
+                # device=self.torch_device
+                # device='cpu'
             )
             self.val_dataset = dataset_type(
                 data_path=self.data_path,
                 prefix=self.val_data_prefix,
-                device=self.torch_device
+                # device=self.torch_device
+                # device='cpu'
             )
         elif stage == 'val':
             self.is_geom = ('geom' in self.val_data_prefix) or ('MOAD' in self.val_data_prefix) or ('pdbbind' in self.train_data_prefix)
             self.val_dataset = dataset_type(
                 data_path=self.data_path,
                 prefix=self.val_data_prefix,
-                device=self.torch_device
+                # device=self.torch_device
+                # device='cpu'
             )
         else:
             raise NotImplementedError
+    
+    # TODO: 这里的device还有问题
+    # def transfer_batch_to_device(self, batch, device, dataloader_idx):
+    #     for k, v in list(batch.items()):
+    #         if torch.is_tensor(v):
+    #             batch[k] = v.to(device, non_blocking=True)
+    #     return batch
+    
+    # def on_after_move_to_device(self):
+    #     # 子模块（如 self.edm、任意自定义 nn.Module）一并放到同一设备
+    #     self.edm.to(self.device)
 
     def train_dataloader(self, collate_fn=collate):
         return get_dataloader(self.train_dataset, self.batch_size, collate_fn=collate_fn, shuffle=True)
@@ -326,7 +340,11 @@ class DDPM(pl.LightningModule):
         self._val_step_outputs.clear()
 
         if (self.current_epoch + 1) % self.test_epochs == 0:
-            sampling_results = self.sample_and_analyze(self.val_dataloader())
+
+            # TODO： 仅在rank 0上进行采样和分析，避免重复计算
+            if self.trainer.global_rank == 0:
+                sampling_results = self.sample_and_analyze(self.val_dataloader())
+
             for metric_name, metric_value in sampling_results.items():
                 self.log(f'{metric_name}/val', metric_value, prog_bar=True)
                 self.metrics.setdefault(f'{metric_name}/val', []).append(metric_value)

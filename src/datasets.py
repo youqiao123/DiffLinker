@@ -105,7 +105,7 @@ class ZincDataset(Dataset):
 
 
 class MOADDataset(Dataset):
-    def __init__(self, data=None, data_path=None, prefix=None, device=None):
+    def __init__(self, data=None, data_path=None, prefix=None, device='cpu'):
         assert (data is not None) or all(x is not None for x in (data_path, prefix, device))
         if data is not None:
             self.data = data
@@ -475,7 +475,8 @@ def collate_with_fragment_without_pocket_edges(batch):
 
 
 def get_dataloader(dataset, batch_size, collate_fn=collate, shuffle=False):
-    return DataLoader(dataset, batch_size, collate_fn=collate_fn, shuffle=shuffle)
+    return DataLoader(dataset, batch_size, collate_fn=collate_fn, shuffle=shuffle, pin_memory=True, persistent_workers=True, num_workers=4)
+    # 本来没有后面三个参数
 
 
 def create_template(tensor, fragment_size, linker_size, fill=0):
