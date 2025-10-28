@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import pickle
 import torch
+import pytorch_lightning as pl
 
 from rdkit import Chem
 from torch.utils.data import Dataset, DataLoader
@@ -242,7 +243,7 @@ class OptimisedMOADDataset(MOADDataset):
         }
 
     @staticmethod
-    def preprocess(data_path, prefix, pocket_mode, device):
+    def preprocess(data_path, prefix, pocket_mode, device='cpu'):
         print('Preprocessing optimised version of the dataset')
         protein_level_data = {}
         fragmentation_level_data = []
@@ -343,7 +344,7 @@ def collate(batch):
     # else:
     #    batch = [data for data in batch if data['num_atoms'] <= 1000]
 
-    for i, data in enumerate(batch):
+    for data in batch:
         for key, value in data.items():
             out.setdefault(key, []).append(value)
 
@@ -362,15 +363,15 @@ def collate(batch):
 
     # In case of MOAD edge_mask is batch_idx
     if 'pocket_mask' in batch[0].keys():
-        batch_mask = torch.cat([
-            torch.ones(n_nodes, dtype=const.TORCH_INT) * i
-            for i in range(batch_size)
-        ]).to(atom_mask.device)
+        batch_mask = torch.arange(batch_size, dtype=const.TORCH_INT).repeat_interleave(n_nodes)
         out['edge_mask'] = batch_mask
     else:
-        edge_mask = atom_mask[:, None, :] * atom_mask[:, :, None]
-        diag_mask = ~torch.eye(edge_mask.size(1), dtype=const.TORCH_INT, device=atom_mask.device).unsqueeze(0)
-        edge_mask *= diag_mask
+        # edge_mask = atom_mask[:, None, :] * atom_mask[:, :, None]
+        # diag_mask = ~torch.eye(edge_mask.size(1), dtype=const.TORCH_INT, device=atom_mask.device).unsqueeze(0)
+        # edge_mask *= diag_mask
+        # out['edge_mask'] = edge_mask.view(batch_size * n_nodes * n_nodes, 1)
+        edge_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
+        edge_mask.diagonal(dim1=1, dim2=2).zero_()
         out['edge_mask'] = edge_mask.view(batch_size * n_nodes * n_nodes, 1)
 
     for key in const.DATA_ATTRS_TO_ADD_LAST_DIM:
@@ -478,6 +479,74 @@ def get_dataloader(dataset, batch_size, collate_fn=collate, shuffle=False):
     return DataLoader(dataset, batch_size, collate_fn=collate_fn, shuffle=shuffle, pin_memory=True, persistent_workers=True, num_workers=4)
     # 本来没有后面三个参数
 
+class DiffLinkerDataModule(pl.LightningDataModule):
+    """LightningDataModule that orchestrates dataset preprocessing and dataloader creation."""
+
+    def __init__(
+        self,
+        data_path,
+        train_data_prefix,
+        val_data_prefix=None,
+        test_data_prefix=None,
+        batch_size=32,
+        dataset_device='cpu',
+        collate_fn=None,
+        train_shuffle=True,
+    ):
+        super().__init__()
+        self.data_path = data_path
+        self.train_data_prefix = train_data_prefix
+        self.val_data_prefix = val_data_prefix
+        self.test_data_prefix = test_data_prefix
+        self.batch_size = batch_size
+        self.dataset_device = dataset_device
+        self.collate_fn = collate_fn or collate
+        self.train_shuffle = train_shuffle
+
+        self.train_dataset = None
+        self.val_dataset = None
+        self.test_dataset = None
+
+    def _instantiate_dataset(self, prefix):
+        if prefix is None:
+            return None
+        dataset_cls = MOADDataset if '.' in prefix else ZincDataset
+        return dataset_cls(data_path=self.data_path, prefix=prefix, device=self.dataset_device)
+
+    def prepare_data(self):
+        # Trigger preprocessing and cached dataset creation.
+        for prefix in {self.train_data_prefix, self.val_data_prefix, self.test_data_prefix}:
+            if prefix is None:
+                continue
+            dataset = self._instantiate_dataset(prefix)
+            del dataset
+
+    def setup(self, stage=None):
+        if stage == 'fit' or stage is None:
+            if self.train_dataset is None:
+                self.train_dataset = self._instantiate_dataset(self.train_data_prefix)
+            if self.val_data_prefix is not None and self.val_dataset is None:
+                self.val_dataset = self._instantiate_dataset(self.val_data_prefix)
+
+        if stage in {'validate', None}:
+            if self.val_data_prefix is not None and self.val_dataset is None:
+                self.val_dataset = self._instantiate_dataset(self.val_data_prefix)
+
+        if stage in {'test', 'predict', None}:
+            if self.test_data_prefix is not None and self.test_dataset is None:
+                self.test_dataset = self._instantiate_dataset(self.test_data_prefix)
+
+    def train_dataloader(self):
+        return get_dataloader(self.train_dataset, self.batch_size, collate_fn=self.collate_fn, shuffle=self.train_shuffle)
+
+    def val_dataloader(self):
+        return get_dataloader(self.val_dataset, self.batch_size, collate_fn=self.collate_fn)
+
+    def test_dataloader(self):
+        return get_dataloader(self.test_dataset, self.batch_size, collate_fn=self.collate_fn)
+
+    def predict_dataloader(self):
+        return self.test_dataloader()
 
 def create_template(tensor, fragment_size, linker_size, fill=0):
     values_to_keep = tensor[:fragment_size]

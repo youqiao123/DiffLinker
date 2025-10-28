@@ -1,6 +1,8 @@
 import numpy as np
 import os
 import pytorch_lightning as pl
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
+
 import torch
 import wandb
 
@@ -116,29 +118,73 @@ class DDPM(pl.LightningModule):
         self.linker_size_sampler = DistributionNodes(LINKER_SIZE_DIST)
 
     def setup(self, stage: Optional[str] = None):
+        datamodule = getattr(self.trainer, 'datamodule', None)
+        if datamodule is not None:
+            if stage in (None, 'fit'):
+                self.train_dataset = getattr(datamodule, 'train_dataset', None)
+                self.val_dataset = getattr(datamodule, 'val_dataset', None)
+                self.is_geom = (
+                    ('geom' in self.train_data_prefix)
+                    or ('MOAD' in self.train_data_prefix)
+                    or ('pdbbind' in self.train_data_prefix)
+                )
+            if stage in (None, 'val', 'validate'):
+                self.val_dataset = getattr(datamodule, 'val_dataset', self.val_dataset)
+                if self.val_data_prefix is not None:
+                    self.is_geom = (
+                        ('geom' in self.val_data_prefix)
+                        or ('MOAD' in self.val_data_prefix)
+                        or ('pdbbind' in self.val_data_prefix)
+                    )
+            if stage in (None, 'test', 'predict'):
+                self.test_dataset = getattr(datamodule, 'test_dataset', None)
+            return
+        
         dataset_type = MOADDataset if '.' in self.train_data_prefix else ZincDataset
-        if stage == 'fit':
-            self.is_geom = ('geom' in self.train_data_prefix) or ('MOAD' in self.train_data_prefix) or ('pdbbind' in self.train_data_prefix)
+        # if stage == 'fit':
+        #     self.is_geom = ('geom' in self.train_data_prefix) or ('MOAD' in self.train_data_prefix) or ('pdbbind' in self.train_data_prefix)
+        dataset_device = self.torch_device or 'cpu'
+
+        if stage in (None, 'fit'):
+            self.is_geom = (
+                ('geom' in self.train_data_prefix)
+                or ('MOAD' in self.train_data_prefix)
+                or ('pdbbind' in self.train_data_prefix)
+            )
             self.train_dataset = dataset_type(
                 data_path=self.data_path,
                 prefix=self.train_data_prefix,
                 # device=self.torch_device
-                # device='cpu'
+                device=dataset_device
             )
             self.val_dataset = dataset_type(
                 data_path=self.data_path,
                 prefix=self.val_data_prefix,
                 # device=self.torch_device
-                # device='cpu'
+                device=dataset_device
             )
-        elif stage == 'val':
-            self.is_geom = ('geom' in self.val_data_prefix) or ('MOAD' in self.val_data_prefix) or ('pdbbind' in self.train_data_prefix)
+
+        elif stage in ('val', 'validate'):
+            if self.val_data_prefix is None:
+                raise ValueError('val_data_prefix must be provided to setup validation dataset')
+            self.is_geom = (
+                ('geom' in self.val_data_prefix)
+                or ('MOAD' in self.val_data_prefix)
+                or ('pdbbind' in self.val_data_prefix)
+            )
             self.val_dataset = dataset_type(
                 data_path=self.data_path,
                 prefix=self.val_data_prefix,
-                # device=self.torch_device
-                # device='cpu'
+                device=dataset_device
             )
+
+        # elif stage == 'val':
+        #     self.is_geom = ('geom' in self.val_data_prefix) or ('MOAD' in self.val_data_prefix) or ('pdbbind' in self.train_data_prefix)
+        #     self.val_dataset = dataset_type(
+        #         data_path=self.data_path,
+        #         prefix=self.val_data_prefix,
+        #         device=self.torch_device
+        #     )
         else:
             raise NotImplementedError
     
@@ -240,7 +286,8 @@ class DDPM(pl.LightningModule):
             for metric_name, metric in training_metrics.items():
                 metric_value = metric.detach().cpu() if isinstance(metric, torch.Tensor) else metric
                 self.metrics.setdefault(f'{metric_name}/train', []).append(metric_value)
-                self.log(f'{metric_name}/train', metric_value, prog_bar=True)
+                self.log(f'{metric_name}/train', metric_value, prog_bar=True, rank_zero_only=True) # NOTE: for ddp
+                # self.log(f'{metric_name}/train', metric_value, prog_bar=True)
         detached_metrics = {
             metric_name: metric.detach().cpu() if isinstance(metric, torch.Tensor) else metric
             for metric_name, metric in training_metrics.items()
@@ -308,7 +355,7 @@ class DDPM(pl.LightningModule):
         for metric in self._train_step_outputs[0].keys():
             avg_metric = self.aggregate_metric(self._train_step_outputs, metric)
             self.metrics.setdefault(f'{metric}/train', []).append(avg_metric)
-            self.log(f'{metric}/train', avg_metric, prog_bar=True)
+            self.log(f'{metric}/train', avg_metric, prog_bar=True, rank_zero_only=True) # NOTE: for ddp
         self._train_step_outputs.clear()
 
     # def validation_epoch_end(self, validation_step_outputs):
@@ -335,7 +382,7 @@ class DDPM(pl.LightningModule):
         for metric in self._val_step_outputs[0].keys():
             avg_metric = self.aggregate_metric(self._val_step_outputs, metric)
             self.metrics.setdefault(f'{metric}/val', []).append(avg_metric)
-            self.log(f'{metric}/val', avg_metric, prog_bar=True)
+            self.log(f'{metric}/val', avg_metric, prog_bar=True, rank_zero_only=True)
 
         self._val_step_outputs.clear()
 
@@ -346,14 +393,14 @@ class DDPM(pl.LightningModule):
                 sampling_results = self.sample_and_analyze(self.val_dataloader())
 
             for metric_name, metric_value in sampling_results.items():
-                self.log(f'{metric_name}/val', metric_value, prog_bar=True)
+                self.log(f'{metric_name}/val', metric_value, prog_bar=True, rank_zero_only=True)
                 self.metrics.setdefault(f'{metric_name}/val', []).append(metric_value)
 
             # Logging the results corresponding to the best validation_and_connectivity
             best_metrics, best_epoch = self.compute_best_validation_metrics()
-            self.log('best_epoch', int(best_epoch), prog_bar=True, batch_size=self.batch_size)
+            self.log('best_epoch', int(best_epoch), prog_bar=True, batch_size=self.batch_size, rank_zero_only=True)
             for metric, value in best_metrics.items():
-                self.log(f'best_{metric}', value, prog_bar=True, batch_size=self.batch_size)
+                self.log(f'best_{metric}', value, prog_bar=True, batch_size=self.batch_size, rank_zero_only=True)
 
     # def test_epoch_end(self, test_step_outputs):
     #     for metric in test_step_outputs[0].keys():
@@ -373,14 +420,14 @@ class DDPM(pl.LightningModule):
         for metric in self._test_step_outputs[0].keys():
             avg_metric = self.aggregate_metric(self._test_step_outputs, metric)
             self.metrics.setdefault(f'{metric}/test', []).append(avg_metric)
-            self.log(f'{metric}/test', avg_metric, prog_bar=True)
+            self.log(f'{metric}/test', avg_metric, prog_bar=True, rank_zero_only=True)
 
         self._test_step_outputs.clear()
 
         if (self.current_epoch + 1) % self.test_epochs == 0:
             sampling_results = self.sample_and_analyze(self.test_dataloader())
             for metric_name, metric_value in sampling_results.items():
-                self.log(f'{metric_name}/test', metric_value, prog_bar=True)
+                self.log(f'{metric_name}/test', metric_value, prog_bar=True, rank_zero_only=True)
                 self.metrics.setdefault(f'{metric_name}/test', []).append(metric_value)
 
     def generate_animation(self, chain_batch, node_mask, batch_i):

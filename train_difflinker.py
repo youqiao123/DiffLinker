@@ -10,10 +10,16 @@ from pytorch_lightning import Trainer, callbacks, loggers
 from src.const import NUMBER_OF_ATOM_TYPES, GEOM_NUMBER_OF_ATOM_TYPES
 from src.lightning import DDPM
 from src.utils import disable_rdkit_logging, set_deterministic, Logger
-
+from src.datasets import DiffLinkerDataModule
 import wandb
 
-wandb.init(mode="offline")
+# wandb.init(mode="offline")
+is_main = int(os.environ.get("RANK", "0")) == 0
+
+if not is_main:
+    wandb.init(mode="disabled") 
+else:
+    wandb.init(mode="offline")
 
 def find_last_checkpoint(checkpoints_dir):
     epoch2fname = [
@@ -46,6 +52,7 @@ def main(args):
     wandb_logger = loggers.WandbLogger(
         save_dir=args.logs,
         project='e3_ddpm_linker_design',
+        group='difflinker_ddp',
         name=experiment,
         id=experiment,
         resume='must' if args.resume is not None else 'allow',
@@ -105,6 +112,13 @@ def main(args):
         anchors_context=anchors_context,
         graph_type=args.graph_type,
     )
+    datamodule = DiffLinkerDataModule(
+        data_path=args.data,
+        train_data_prefix=args.train_data_prefix,
+        val_data_prefix=args.val_data_prefix,
+        batch_size=args.batch_size,
+        dataset_device='cpu',
+    )
     checkpoint_callback = callbacks.ModelCheckpoint(
         dirpath=checkpoints_dir,
         filename=experiment + '_{epoch:02d}',
@@ -129,7 +143,8 @@ def main(args):
         print(f'Training will be resumed from the latest checkpoint {last_checkpoint}')
 
     print('Start training')
-    trainer.fit(model=ddpm, ckpt_path=last_checkpoint)
+    # trainer.fit(model=ddpm, ckpt_path=last_checkpoint)
+    trainer.fit(model=ddpm, datamodule=datamodule, ckpt_path=last_checkpoint)
 
 
 if __name__ == '__main__':
