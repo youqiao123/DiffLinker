@@ -4,10 +4,11 @@ import numpy as np
 import pandas as pd
 import os
 import pickle
+import warnings
 
 from rdkit import Chem, Geometry
 from tqdm import tqdm
-from Bio.PDB import PDBParser
+from Bio.PDB import PDBParser, PDBExceptions
 
 from pdb import set_trace
 
@@ -202,7 +203,8 @@ def prepare_fragments_and_linker(frags_smi, linker_smi, mol):
     # Expecting to see either a single correct match or two correct matches
     # If the molecule is symmetric then both matches are equivalent, and we can use any
     if len(correct_matches) > 2:
-        raise Exception('Found more than two fragment matches')
+        raise Exception('Found more than two fragment matches') 
+    # 有超过两种不同的 (frag1, frag2, linker) 匹配方式，都能成功地从原分子 mol 中找到相应的原子索引匹配。
 
     conf_frag1 = match2conf_frag1[correct_matches[0][0]]
     conf_frag2 = match2conf_frag2[correct_matches[0][1]]
@@ -214,46 +216,116 @@ def prepare_fragments_and_linker(frags_smi, linker_smi, mol):
     return newfrag1, newfrag2, newlinker
 
 
-def get_pocket(mol, pdb_path):
-    struct = PDBParser().get_structure('', pdb_path)
-    residue_ids = []
-    atom_coords = []
+# def get_pocket(mol, pdb_path):
+#     struct = PDBParser().get_structure('', pdb_path)
+#     residue_ids = []
+#     atom_coords = []
 
-    for residue in struct.get_residues():
-        resid = residue.get_id()[1]
-        for atom in residue.get_atoms():
-            atom_coords.append(atom.get_coord())
-            residue_ids.append(resid)
+#     for residue in struct.get_residues():
+#         resid = residue.get_id()[1]
+#         for atom in residue.get_atoms():
+#             atom_coords.append(atom.get_coord())
+#             residue_ids.append(resid)
 
-    residue_ids = np.array(residue_ids)
-    atom_coords = np.array(atom_coords)
-    mol_atom_coords = mol.GetConformer().GetPositions()
+#     residue_ids = np.array(residue_ids)
+#     atom_coords = np.array(atom_coords)
+#     mol_atom_coords = mol.GetConformer().GetPositions()
 
-    distances = np.linalg.norm(atom_coords[:, None, :] - mol_atom_coords[None, :, :], axis=-1)
-    contact_residues = np.unique(residue_ids[np.where(distances.min(1) <= 6)[0]])
+#     distances = np.linalg.norm(atom_coords[:, None, :] - mol_atom_coords[None, :, :], axis=-1)
+#     contact_residues = np.unique(residue_ids[np.where(distances.min(1) <= 6)[0]])
 
-    pocket_coords_full = []
-    pocket_types_full = []
+#     pocket_coords_full = []
+#     pocket_types_full = []
 
-    pocket_coords_bb = []
-    pocket_types_bb = []
+#     pocket_coords_bb = []
+#     pocket_types_bb = []
 
-    for residue in struct.get_residues():
-        resid = residue.get_id()[1]
-        if resid not in contact_residues:
-            continue
+#     for residue in struct.get_residues():
+#         resid = residue.get_id()[1]
+#         if resid not in contact_residues:
+#             continue
 
-        for atom in residue.get_atoms():
-            atom_name = atom.get_name()
-            atom_type = atom.element.upper()
-            atom_coord = atom.get_coord()
+#         for atom in residue.get_atoms():
+#             atom_name = atom.get_name()
+#             atom_type = atom.element.upper()
+#             atom_coord = atom.get_coord()
 
-            pocket_coords_full.append(atom_coord.tolist())
-            pocket_types_full.append(atom_type)
+#             pocket_coords_full.append(atom_coord.tolist())
+#             pocket_types_full.append(atom_type)
 
-            if atom_name in {'N', 'CA', 'C', 'O'}:
-                pocket_coords_bb.append(atom_coord.tolist())
-                pocket_types_bb.append(atom_type)
+#             if atom_name in {'N', 'CA', 'C', 'O'}:
+#                 pocket_coords_bb.append(atom_coord.tolist())
+#                 pocket_types_bb.append(atom_type)
+
+#     return {
+#         'full_coord': pocket_coords_full,
+#         'full_types': pocket_types_full,
+#         'bb_coord': pocket_coords_bb,
+#         'bb_types': pocket_types_bb,
+#     }
+
+warnings.filterwarnings("ignore", category=PDBExceptions.PDBConstructionWarning)
+
+def get_pocket(pocket_pdb_path):
+    parser = PDBParser(QUIET=True, PERMISSIVE=True)  # 关键：PERMISSIVE=True
+    try:
+        struct = parser.get_structure('', str(pocket_pdb_path))
+        # === 与你之前的简版读取一致 ===
+        pocket_coords_full, pocket_types_full = [], []
+        pocket_coords_bb, pocket_types_bb = [], []
+        for residue in struct.get_residues():
+            for atom in residue.get_atoms():
+                elem = (atom.element or '').upper()
+                if elem == 'H':
+                    continue
+                coord = atom.get_coord().tolist()
+                name = atom.get_name().strip()
+                pocket_coords_full.append(coord)
+                pocket_types_full.append(elem)
+                if name in {'N', 'CA', 'C', 'O'}:
+                    pocket_coords_bb.append(coord)
+                    pocket_types_bb.append(elem)
+        return {
+            'full_coord': pocket_coords_full,
+            'full_types': pocket_types_full,
+            'bb_coord': pocket_coords_bb,
+            'bb_types': pocket_types_bb,
+        }
+    except Exception as e:
+        # 进入兜底解析（行级解析），尽量挽救 usable 原子
+        return _fallback_parse_pdb_lines(pocket_pdb_path)
+    
+def _fallback_parse_pdb_lines(pocket_pdb_path):
+    pocket_coords_full, pocket_types_full = [], []
+    pocket_coords_bb, pocket_types_bb = [], []
+
+    backbone_names = {'N', 'CA', 'C', 'O'}
+
+    with open(pocket_pdb_path, 'r') as f:
+        for line in f:
+            rec = line[:6]
+            if rec not in ('ATOM  ', 'HETATM'):
+                continue
+            # 坐标固定列：30:38, 38:46, 46:54（PDB 标准列）
+            try:
+                x = float(line[30:38])
+                y = float(line[38:46])
+                z = float(line[46:54])
+            except Exception:
+                # 坐标损坏行：跳过
+                continue
+
+            name = line[12:16].strip()
+            elem = line[76:78].strip().upper() or (name[:2].strip().upper() if name else 'X')
+            if elem == 'H':
+                continue
+
+            coord = [x, y, z]
+            pocket_coords_full.append(coord)
+            pocket_types_full.append(elem)
+            if name in backbone_names:
+                pocket_coords_bb.append(coord)
+                pocket_types_bb.append(elem)
 
     return {
         'full_coord': pocket_coords_full,
@@ -261,7 +333,6 @@ def get_pocket(mol, pdb_path):
         'bb_coord': pocket_coords_bb,
         'bb_types': pocket_types_bb,
     }
-
 
 def process_sdf(sdf_path, table, proteins_path, progress=True):
     supplier = Chem.SDMolSupplier(sdf_path)
@@ -280,7 +351,9 @@ def process_sdf(sdf_path, table, proteins_path, progress=True):
         # Creating protein pocket
         pdb_code = mol_name.split('_')[0]
         pdb_path = os.path.join(proteins_path, f'{pdb_code}_protein.pdb')
-        pocket = get_pocket(mol, pdb_path)
+        pocket_path = os.path.join(f'/home/qianyouqiao/sc_complexes/{pdb_code}/{pdb_code}_pocket.pdb')
+        # pocket = get_pocket(mol, pdb_path)
+        pocket = get_pocket(pocket_path)
 
         for linker_smi, frags_smi in table[table.molecule_name == mol_name][['linker', 'fragments']].values:
             try:
