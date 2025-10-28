@@ -7,9 +7,15 @@ import subprocess
 from rdkit import Chem
 from Bio.PDB import PDBParser
 
+from torch.utils.data import DataLoader
+
 from src import const
 from src.datasets import (
-    collate_with_fragment_without_pocket_edges, get_dataloader, get_one_hot, parse_molecule, MOADDataset
+    DEFAULT_DATALOADER_KWARGS,
+    MOADDataset,
+    collate_with_fragment_without_pocket_edges,
+    get_one_hot,
+    parse_molecule,
 )
 from src.lightning import DDPM
 from src.visualizer import save_xyz_file
@@ -250,9 +256,16 @@ def main(input_path, pocket_path, backbone_atoms_only, model,
     ddpm.val_dataset = dataset
 
     global_batch_size = min(n_samples, max_batch_size)
-    dataloader = get_dataloader(
-        dataset, batch_size=global_batch_size, collate_fn=collate_with_fragment_without_pocket_edges
-    )
+    dataloader_kwargs = {
+        'batch_size': global_batch_size,
+        'collate_fn': collate_with_fragment_without_pocket_edges,
+        'shuffle': False,
+        **DEFAULT_DATALOADER_KWARGS,
+    }
+    if dataloader_kwargs['num_workers'] == 0:
+        dataloader_kwargs.pop('persistent_workers', None)
+        dataloader_kwargs.pop('prefetch_factor', None)
+    dataloader = DataLoader(dataset, **dataloader_kwargs)
 
     # Sampling
     print('Sampling...')

@@ -6,8 +6,14 @@ import torch
 import subprocess
 from rdkit import Chem
 
+from torch.utils.data import DataLoader
+
 from src import const
-from src.datasets import collate_with_fragment_edges, get_dataloader, parse_molecule
+from src.datasets import (
+    DEFAULT_DATALOADER_KWARGS,
+    collate_with_fragment_edges,
+    parse_molecule,
+)
 from src.lightning import DDPM
 from src.linker_size_lightning import SizeClassifier
 from src.utils import FoundNaNException
@@ -143,7 +149,16 @@ def main(input_path, model, output_dir, n_samples, n_steps, linker_size, anchors
         'num_atoms': len(positions),
     }] * n_samples
     global_batch_size = min(n_samples, 64)
-    dataloader = get_dataloader(dataset, batch_size=global_batch_size, collate_fn=collate_with_fragment_edges)
+    dataloader_kwargs = {
+        'batch_size': global_batch_size,
+        'collate_fn': collate_with_fragment_edges,
+        'shuffle': False,
+        **DEFAULT_DATALOADER_KWARGS,
+    }
+    if dataloader_kwargs['num_workers'] == 0:
+        dataloader_kwargs.pop('persistent_workers', None)
+        dataloader_kwargs.pop('prefetch_factor', None)
+    dataloader = DataLoader(dataset, **dataloader_kwargs)
 
     # Sampling
     print('Sampling...')
