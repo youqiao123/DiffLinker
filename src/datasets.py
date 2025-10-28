@@ -14,6 +14,14 @@ from src import const
 from pdb import set_trace
 
 
+DEFAULT_DATALOADER_KWARGS = {
+    'num_workers': 4,
+    'pin_memory': True,
+    'persistent_workers': True,
+    'prefetch_factor': 2,
+}
+
+
 def read_sdf(sdf_path):
     with Chem.SDMolSupplier(sdf_path, sanitize=False) as supplier:
         for molecule in supplier:
@@ -475,10 +483,6 @@ def collate_with_fragment_without_pocket_edges(batch):
     return out
 
 
-def get_dataloader(dataset, batch_size, collate_fn=collate, shuffle=False):
-    return DataLoader(dataset, batch_size, collate_fn=collate_fn, shuffle=shuffle, pin_memory=True, persistent_workers=True, num_workers=4)
-    # 本来没有后面三个参数
-
 class DiffLinkerDataModule(pl.LightningDataModule):
     """LightningDataModule that orchestrates dataset preprocessing and dataloader creation."""
 
@@ -492,6 +496,10 @@ class DiffLinkerDataModule(pl.LightningDataModule):
         dataset_device='cpu',
         collate_fn=None,
         train_shuffle=True,
+        num_workers=DEFAULT_DATALOADER_KWARGS['num_workers'],
+        pin_memory=DEFAULT_DATALOADER_KWARGS['pin_memory'],
+        persistent_workers=DEFAULT_DATALOADER_KWARGS['persistent_workers'],
+        prefetch_factor=DEFAULT_DATALOADER_KWARGS['prefetch_factor'],
     ):
         super().__init__()
         self.data_path = data_path
@@ -502,6 +510,10 @@ class DiffLinkerDataModule(pl.LightningDataModule):
         self.dataset_device = dataset_device
         self.collate_fn = collate_fn or collate
         self.train_shuffle = train_shuffle
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
+        self.persistent_workers = persistent_workers
+        self.prefetch_factor = prefetch_factor
 
         self.train_dataset = None
         self.val_dataset = None
@@ -537,16 +549,35 @@ class DiffLinkerDataModule(pl.LightningDataModule):
                 self.test_dataset = self._instantiate_dataset(self.test_data_prefix)
 
     def train_dataloader(self):
-        return get_dataloader(self.train_dataset, self.batch_size, collate_fn=self.collate_fn, shuffle=self.train_shuffle)
+        return self._create_dataloader(self.train_dataset, shuffle=self.train_shuffle)
 
     def val_dataloader(self):
-        return get_dataloader(self.val_dataset, self.batch_size, collate_fn=self.collate_fn)
+        return self._create_dataloader(self.val_dataset)
 
     def test_dataloader(self):
-        return get_dataloader(self.test_dataset, self.batch_size, collate_fn=self.collate_fn)
+        return self._create_dataloader(self.test_dataset)
 
     def predict_dataloader(self):
         return self.test_dataloader()
+
+    def _create_dataloader(self, dataset, shuffle=False):
+        if dataset is None:
+            return None
+
+        dataloader_kwargs = dict(
+            batch_size=self.batch_size,
+            collate_fn=self.collate_fn,
+            shuffle=shuffle,
+            num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+        )
+
+        if self.num_workers > 0:
+            dataloader_kwargs["persistent_workers"] = self.persistent_workers
+            if self.prefetch_factor is not None:
+                dataloader_kwargs["prefetch_factor"] = self.prefetch_factor
+
+        return DataLoader(dataset, **dataloader_kwargs)
 
 def create_template(tensor, fragment_size, linker_size, fill=0):
     values_to_keep = tensor[:fragment_size]

@@ -1,10 +1,12 @@
 import pytorch_lightning as pl
 import torch
 
+from torch.utils.data import DataLoader
+
 from src.const import ZINC_TRAIN_LINKER_ID2SIZE, ZINC_TRAIN_LINKER_SIZE2ID
 from src.linker_size import SizeGNN
 from src.egnn import coord2diff
-from src.datasets import ZincDataset, get_dataloader, collate_with_fragment_edges
+from src.datasets import DEFAULT_DATALOADER_KWARGS, ZincDataset, collate_with_fragment_edges
 from typing import Dict, List, Optional
 from torch.nn.functional import cross_entropy, mse_loss, sigmoid
 
@@ -72,13 +74,13 @@ class SizeClassifier(pl.LightningModule):
             raise NotImplementedError
 
     def train_dataloader(self):
-        return get_dataloader(self.train_dataset, self.batch_size, collate_fn=collate_with_fragment_edges, shuffle=True)
+        return _create_dataloader(self.train_dataset, self.batch_size, collate_with_fragment_edges, shuffle=True)
 
     def val_dataloader(self):
-        return get_dataloader(self.val_dataset, self.batch_size, collate_fn=collate_with_fragment_edges)
+        return _create_dataloader(self.val_dataset, self.batch_size, collate_with_fragment_edges)
 
     def test_dataloader(self):
-        return get_dataloader(self.test_dataset, self.batch_size, collate_fn=collate_with_fragment_edges)
+        return _create_dataloader(self.test_dataset, self.batch_size, collate_with_fragment_edges)
 
     def forward(self, data, return_loss=True, with_pocket=False, adjust_shape=False):
         h = data['one_hot']
@@ -230,13 +232,13 @@ class SizeOrdinalClassifier(pl.LightningModule):
             raise NotImplementedError
 
     def train_dataloader(self):
-        return get_dataloader(self.train_dataset, self.batch_size, collate_fn=collate_with_fragment_edges, shuffle=True)
+        return _create_dataloader(self.train_dataset, self.batch_size, collate_with_fragment_edges, shuffle=True)
 
     def val_dataloader(self):
-        return get_dataloader(self.val_dataset, self.batch_size, collate_fn=collate_with_fragment_edges)
+        return _create_dataloader(self.val_dataset, self.batch_size, collate_with_fragment_edges)
 
     def test_dataloader(self):
-        return get_dataloader(self.test_dataset, self.batch_size, collate_fn=collate_with_fragment_edges)
+        return _create_dataloader(self.test_dataset, self.batch_size, collate_with_fragment_edges)
 
     def forward(self, data):
         h = data['one_hot']
@@ -386,13 +388,13 @@ class SizeRegressor(pl.LightningModule):
             raise NotImplementedError
 
     def train_dataloader(self):
-        return get_dataloader(self.train_dataset, self.batch_size, collate_fn=collate_with_fragment_edges, shuffle=True)
+        return _create_dataloader(self.train_dataset, self.batch_size, collate_with_fragment_edges, shuffle=True)
 
     def val_dataloader(self):
-        return get_dataloader(self.val_dataset, self.batch_size, collate_fn=collate_with_fragment_edges)
+        return _create_dataloader(self.val_dataset, self.batch_size, collate_with_fragment_edges)
 
     def test_dataloader(self):
-        return get_dataloader(self.test_dataset, self.batch_size, collate_fn=collate_with_fragment_edges)
+        return _create_dataloader(self.test_dataset, self.batch_size, collate_with_fragment_edges)
 
     def forward(self, data):
         h = data['one_hot']
@@ -466,3 +468,21 @@ class SizeRegressor(pl.LightningModule):
     @staticmethod
     def aggregate_metric(step_outputs, metric):
         return torch.tensor([out[metric] for out in step_outputs]).mean()
+
+
+def _create_dataloader(dataset, batch_size, collate_fn, shuffle=False):
+    if dataset is None:
+        return None
+
+    dataloader_kwargs = {
+        'batch_size': batch_size,
+        'collate_fn': collate_fn,
+        'shuffle': shuffle,
+        **DEFAULT_DATALOADER_KWARGS,
+    }
+    if dataloader_kwargs['num_workers'] == 0:
+        dataloader_kwargs.pop('persistent_workers', None)
+        dataloader_kwargs.pop('prefetch_factor', None)
+
+    return DataLoader(dataset, **dataloader_kwargs)
+

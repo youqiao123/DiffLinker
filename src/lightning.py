@@ -6,12 +6,18 @@ from pytorch_lightning.utilities.rank_zero import rank_zero_only
 import torch
 import wandb
 
+from torch.utils.data import DataLoader
+
 from src import metrics, utils, delinker
 from src.const import LINKER_SIZE_DIST
 from src.egnn import Dynamics, DynamicsWithPockets
 from src.edm import EDM, InpaintingEDM
 from src.datasets import (
-    ZincDataset, MOADDataset, create_templates_for_linker_generation, get_dataloader, collate
+    DEFAULT_DATALOADER_KWARGS,
+    MOADDataset,
+    ZincDataset,
+    collate,
+    create_templates_for_linker_generation,
 )
 from src.linker_size import DistributionNodes
 from src.molecule_builder import build_molecules
@@ -200,13 +206,29 @@ class DDPM(pl.LightningModule):
     #     self.edm.to(self.device)
 
     def train_dataloader(self, collate_fn=collate):
-        return get_dataloader(self.train_dataset, self.batch_size, collate_fn=collate_fn, shuffle=True)
+        return self._create_dataloader(self.train_dataset, collate_fn=collate_fn, shuffle=True)
 
     def val_dataloader(self, collate_fn=collate):
-        return get_dataloader(self.val_dataset, self.batch_size, collate_fn=collate_fn)
+        return self._create_dataloader(self.val_dataset, collate_fn=collate_fn)
 
     def test_dataloader(self, collate_fn=collate):
-        return get_dataloader(self.test_dataset, self.batch_size, collate_fn=collate_fn)
+        return self._create_dataloader(self.test_dataset, collate_fn=collate_fn)
+
+    def _create_dataloader(self, dataset, collate_fn, shuffle=False):
+        if dataset is None:
+            return None
+
+        dataloader_kwargs = {
+            'batch_size': self.batch_size,
+            'collate_fn': collate_fn,
+            'shuffle': shuffle,
+            **DEFAULT_DATALOADER_KWARGS,
+        }
+        if dataloader_kwargs['num_workers'] == 0:
+            dataloader_kwargs.pop('persistent_workers', None)
+            dataloader_kwargs.pop('prefetch_factor', None)
+
+        return DataLoader(dataset, **dataloader_kwargs)
 
     def forward(self, data, training):
         x = data['positions']

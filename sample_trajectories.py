@@ -2,7 +2,9 @@ import argparse
 import os
 import torch
 
-from src.datasets import get_dataloader
+from torch.utils.data import DataLoader
+
+from src.datasets import DEFAULT_DATALOADER_KWARGS, collate
 from src.lightning import DDPM
 from src.visualizer import save_xyz_file, visualize_chain
 from tqdm import tqdm
@@ -35,11 +37,16 @@ if args.data is not None:
 
 model = model.eval().to(args.device)
 model.setup(stage='val')
-dataloader = get_dataloader(
-    model.val_dataset,
-    batch_size=32,
-    # batch_size=len(model.val_dataset)
-)
+dataloader_kwargs = {
+    'batch_size': 32,
+    'collate_fn': collate,
+    'shuffle': False,
+    **DEFAULT_DATALOADER_KWARGS,
+}
+if dataloader_kwargs['num_workers'] == 0:
+    dataloader_kwargs.pop('persistent_workers', None)
+    dataloader_kwargs.pop('prefetch_factor', None)
+dataloader = DataLoader(model.val_dataset, **dataloader_kwargs)
 
 start = 0
 for data in tqdm(dataloader):
