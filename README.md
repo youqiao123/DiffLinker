@@ -151,9 +151,15 @@ mkdir -p logs
 
 Run trainig:
 ```shell
-CUDA_VISIBLE_DEVICES=7 python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml > run01.log 2>&1
+export CUDA_VISIBLE_DEVICES=7
+nohup python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml > run09.log 2>&1 &
+python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml --demo > run09.log 2>&1 
 python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml
+
+
 slurm_submit -n diff -p gpu -c 24 -g 2 'python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml'
+
+pkill -u $(whoami) python
 ```
 
 ### Training Size GNN

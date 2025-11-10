@@ -131,10 +131,27 @@ def run(ligands_dir, output_table, output_conformers):
 
             # TODO 预处理 为什么要加这一步筛选？是怕分子量太大导致fragmentation时间过长吗？我把40改成60，2改成1
             # 加了筛选，只有8万多数据
-            # if mol.GetNumAtoms() <= 70 and mol.GetRingInfo().NumRings() >= 2:
-            else:
+            if mol.GetNumAtoms() <= 70 and mol.GetRingInfo().NumRings() >= 2:
+            # else:
+                # try:
+                #     res = fragment_by_mmpa(
+                #         mol,
+                #         mol_smiles=Chem.MolToSmiles(mol),
+                #         mol_name=mol_name,
+                #         min_cuts=2,
+                #         max_cuts=2,
+                #         min_link_size=min_link_size,
+                #         min_frag_size=min_frag_size,
+                #     )
+                # except:
+                #     continue
+                # if len(res) > 0:
+                #     mol_results += res
+                #     mol.SetProp('_Name', mol_name)
+                #     conformers.append(mol)
+            
                 try:
-                    res = fragment_by_mmpa(
+                    res = fragment_by_brics(
                         mol,
                         mol_smiles=Chem.MolToSmiles(mol),
                         mol_name=mol_name,
@@ -142,32 +159,15 @@ def run(ligands_dir, output_table, output_conformers):
                         max_cuts=2,
                         min_link_size=min_link_size,
                         min_frag_size=min_frag_size,
-                    )
-                except:
-                    continue
+                    )                
+                    mol_results += res
+                except Exception as e:
+                    print(f'Error [BRICS] with {mol_name}: {e}')
+
                 if len(res) > 0:
                     mol_results += res
                     mol.SetProp('_Name', mol_name)
                     conformers.append(mol)
-            
-            try:
-                res = fragment_by_brics(
-                    mol,
-                    mol_smiles=Chem.MolToSmiles(mol),
-                    mol_name=mol_name,
-                    min_cuts=2,
-                    max_cuts=2,
-                    min_link_size=min_link_size,
-                    min_frag_size=min_frag_size,
-                )                
-                mol_results += res
-            except Exception as e:
-                print(f'Error [BRICS] with {mol_name}: {e}')
-
-            if len(res) > 0:
-                mol_results += res
-                mol.SetProp('_Name', mol_name)
-                conformers.append(mol)
 
     table = pd.DataFrame(mol_results, columns=['molecule_name', 'molecule', 'linker', 'fragments', 'method'])
     table = table.drop_duplicates(['molecule_name', 'molecule', 'linker'])

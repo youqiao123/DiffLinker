@@ -194,12 +194,13 @@ class DDPM(pl.LightningModule):
         else:
             raise NotImplementedError
     
-    # TODO: 这里的device还有问题
-    # def transfer_batch_to_device(self, batch, device, dataloader_idx):
-    #     for k, v in list(batch.items()):
-    #         if torch.is_tensor(v):
-    #             batch[k] = v.to(device, non_blocking=True)
-    #     return batch
+    def transfer_batch_to_device(self, batch, device, dataloader_idx: int):
+        def _move(x):
+            if torch.is_tensor(x): return x.to(device, non_blocking=True)
+            if isinstance(x, dict): return {k: _move(v) for k, v in x.items()}
+            if isinstance(x, (list, tuple)): return type(x)(_move(v) for v in x)
+            return x
+        return _move(batch)
     
     # def on_after_move_to_device(self):
     #     # 子模块（如 self.edm、任意自定义 nn.Module）一并放到同一设备
@@ -282,6 +283,18 @@ class DDPM(pl.LightningModule):
             edge_mask=edge_mask,
             context=context
         )
+    
+    def on_fit_start(self):
+        try:
+            vd = self.val_dataloader()
+            vlen = len(vd) if vd is not None else 0
+        except Exception:
+            vlen = -1
+        self.print(f"[FIT_START] check_val_every_n_epoch={getattr(self.trainer, 'check_val_every_n_epoch', 'NA')}, "
+                f"limit_val_batches={getattr(self.trainer, 'limit_val_batches', 'NA')}, "
+                f"val_dataloader_len={vlen}")
+        # 确保验证集存在且非空
+        assert vlen > 0, "Validation dataloader is empty or None. Check val_data_prefix / dataset construction."
 
     def training_step(self, data, *args):
         delta_log_px, kl_prior, loss_term_t, loss_term_0, l2_loss, noise_t, noise_0 = self.forward(data, training=True)
@@ -316,60 +329,30 @@ class DDPM(pl.LightningModule):
         }
         self._train_step_outputs.append(detached_metrics)
         return training_metrics
+    
 
-    def validation_step(self, data, *args):
-        delta_log_px, kl_prior, loss_term_t, loss_term_0, l2_loss, noise_t, noise_0 = self.forward(data, training=False)
-        vlb_loss = kl_prior + loss_term_t + loss_term_0 - delta_log_px
-        if self.loss_type == 'l2':
-            loss = l2_loss
-        elif self.loss_type == 'vlb':
-            loss = vlb_loss
-        else:
-            raise NotImplementedError(self.loss_type)
-        validation_metrics = {
-            'loss': loss,
-            'delta_log_px': delta_log_px,
-            'kl_prior': kl_prior,
-            'loss_term_t': loss_term_t,
-            'loss_term_0': loss_term_0,
-            'l2_loss': l2_loss,
-            'vlb_loss': vlb_loss,
-            'noise_t': noise_t,
-            'noise_0': noise_0
-        }
-        detached_metrics = self._detach_metrics(validation_metrics)
-        self._val_step_outputs.append(detached_metrics)
-        return validation_metrics
+    def on_validation_start(self):
+        # 清空 val 缓存
+        self._val_step_outputs = []
+        self._val_pred_mols, self._val_true_mols, self._val_true_frags = [], [], []
 
-    def test_step(self, data, *args):
-        delta_log_px, kl_prior, loss_term_t, loss_term_0, l2_loss, noise_t, noise_0 = self.forward(data, training=False)
-        vlb_loss = kl_prior + loss_term_t + loss_term_0 - delta_log_px
-        if self.loss_type == 'l2':
-            loss = l2_loss
-        elif self.loss_type == 'vlb':
-            loss = vlb_loss
-        else:
-            raise NotImplementedError(self.loss_type)
-        test_metrics = {
-            'loss': loss,
-            'delta_log_px': delta_log_px,
-            'kl_prior': kl_prior,
-            'loss_term_t': loss_term_t,
-            'loss_term_0': loss_term_0,
-            'l2_loss': l2_loss,
-            'vlb_loss': vlb_loss,
-            'noise_t': noise_t,
-            'noise_0': noise_0
-        }
-        detached_metrics = self._detach_metrics(test_metrics)
-        self._test_step_outputs.append(detached_metrics)
-        return test_metrics
 
-    # def training_epoch_end(self, training_step_outputs):
-    #     for metric in training_step_outputs[0].keys():
-    #         avg_metric = self.aggregate_metric(training_step_outputs, metric)
-    #         self.metrics.setdefault(f'{metric}/train', []).append(avg_metric)
-    #         self.log(f'{metric}/train', avg_metric, prog_bar=True)
+    def validation_step(self, data, batch_idx, *args):
+        self.print(f"[VAL_STEP] epoch={self.current_epoch} global_step={self.global_step} "
+                   f"rank0={self.trainer.is_global_zero}")
+        do_sampling = ((self.current_epoch + 1) % self.test_epochs == 0)
+        return self._eval_step_common(data, stage='val', batch_idx=batch_idx, do_sampling=do_sampling)
+
+
+    def on_test_start(self):
+        # 清空 test 缓存
+        self._test_step_outputs = []
+        self._test_pred_mols, self._test_true_mols, self._test_true_frags = [], [], []
+
+
+    def test_step(self, data, batch_idx, *args):
+        return self._eval_step_common(data, stage='test', batch_idx=batch_idx, do_sampling=True)
+
 
     def on_train_epoch_end(self):
         if not self._train_step_outputs:
@@ -380,65 +363,43 @@ class DDPM(pl.LightningModule):
             self.log(f'{metric}/train', avg_metric, prog_bar=True, rank_zero_only=True) # NOTE: for ddp
         self._train_step_outputs.clear()
 
-    # def validation_epoch_end(self, validation_step_outputs):
-    #     for metric in validation_step_outputs[0].keys():
-    #         avg_metric = self.aggregate_metric(validation_step_outputs, metric)
-    #         self.metrics.setdefault(f'{metric}/val', []).append(avg_metric)
-    #         self.log(f'{metric}/val', avg_metric, prog_bar=True)
-
-    #     if (self.current_epoch + 1) % self.test_epochs == 0:
-    #         sampling_results = self.sample_and_analyze(self.val_dataloader())
-    #         for metric_name, metric_value in sampling_results.items():
-    #             self.log(f'{metric_name}/val', metric_value, prog_bar=True)
-    #             self.metrics.setdefault(f'{metric_name}/val', []).append(metric_value)
-
-    #         # Logging the results corresponding to the best validation_and_connectivity
-    #         best_metrics, best_epoch = self.compute_best_validation_metrics()
-    #         self.log('best_epoch', int(best_epoch), prog_bar=True, batch_size=self.batch_size)
-    #         for metric, value in best_metrics.items():
-    #             self.log(f'best_{metric}', value, prog_bar=True, batch_size=self.batch_size)
-
     def on_validation_epoch_end(self):
+        self.print(f"[VAL_END] epoch={self.current_epoch} "
+                f"val_steps_collected={len(self._val_step_outputs)} "
+                f"pred_mols={len(getattr(self, '_val_pred_mols', []))}")
+        
         if not self._val_step_outputs:
             return
         for metric in self._val_step_outputs[0].keys():
             avg_metric = self.aggregate_metric(self._val_step_outputs, metric)
             self.metrics.setdefault(f'{metric}/val', []).append(avg_metric)
-            self.log(f'{metric}/val', avg_metric, prog_bar=True, rank_zero_only=True)
+            self.log(f'{metric}/val', avg_metric, prog_bar=True)
 
         self._val_step_outputs.clear()
 
-        if (self.current_epoch + 1) % self.test_epochs == 0:
-
-            # TODO： 仅在rank 0上进行采样和分析，避免重复计算
-            if self.trainer.global_rank == 0:
-                sampling_results = self.sample_and_analyze(self.val_dataloader())
-
+        if self.trainer.is_global_zero and len(self._val_pred_mols) > 0:
+            sampling_results = {
+                **metrics.compute_metrics(self._val_pred_mols, self._val_true_mols),
+                **delinker.get_delinker_metrics(self._val_pred_mols, self._val_true_mols, self._val_true_frags),
+            }
             for metric_name, metric_value in sampling_results.items():
                 self.log(f'{metric_name}/val', metric_value, prog_bar=True, rank_zero_only=True)
-                self.metrics.setdefault(f'{metric_name}/val', []).append(metric_value)
 
-            # Logging the results corresponding to the best validation_and_connectivity
+        if (self.current_epoch + 1) % self.test_epochs == 0:
             best_metrics, best_epoch = self.compute_best_validation_metrics()
-            self.log('best_epoch', int(best_epoch), prog_bar=True, batch_size=self.batch_size, rank_zero_only=True)
+            self.log('best_epoch', int(best_epoch), prog_bar=True, batch_size=self.batch_size)
             for metric, value in best_metrics.items():
-                self.log(f'best_{metric}', value, prog_bar=True, batch_size=self.batch_size, rank_zero_only=True)
+                self.log(f'best_{metric}', value, prog_bar=True, batch_size=self.batch_size)
 
-    # def test_epoch_end(self, test_step_outputs):
-    #     for metric in test_step_outputs[0].keys():
-    #         avg_metric = self.aggregate_metric(test_step_outputs, metric)
-    #         self.metrics.setdefault(f'{metric}/test', []).append(avg_metric)
-    #         self.log(f'{metric}/test', avg_metric, prog_bar=True)
+        self._val_pred_mols.clear(); self._val_true_mols.clear(); self._val_true_frags.clear()
 
-    #     if (self.current_epoch + 1) % self.test_epochs == 0:
-    #         sampling_results = self.sample_and_analyze(self.test_dataloader())
-    #         for metric_name, metric_value in sampling_results.items():
-    #             self.log(f'{metric_name}/test', metric_value, prog_bar=True)
-    #             self.metrics.setdefault(f'{metric_name}/test', []).append(metric_value)
+
 
     def on_test_epoch_end(self):
+        # 1) 聚合并记录 step 标量指标（每个 epoch 都做）
         if not self._test_step_outputs:
             return
+
         for metric in self._test_step_outputs[0].keys():
             avg_metric = self.aggregate_metric(self._test_step_outputs, metric)
             self.metrics.setdefault(f'{metric}/test', []).append(avg_metric)
@@ -446,11 +407,24 @@ class DDPM(pl.LightningModule):
 
         self._test_step_outputs.clear()
 
-        if (self.current_epoch + 1) % self.test_epochs == 0:
-            sampling_results = self.sample_and_analyze(self.test_dataloader())
+        # 2) 分子级采样指标：仅在 rank0、且确实做过采样时汇总
+        # （前提：在 test_step 中你已用 do_sampling=True 调用了采样并把结果写入
+        #  self._test_pred_mols / _test_true_mols / _test_true_frags）
+        if self.trainer.is_global_zero and len(getattr(self, "_test_pred_mols", [])) > 0:
+            sampling_results = {
+                **metrics.compute_metrics(self._test_pred_mols, self._test_true_mols),
+                **delinker.get_delinker_metrics(self._test_pred_mols, self._test_true_mols, self._test_true_frags),
+            }
             for metric_name, metric_value in sampling_results.items():
                 self.log(f'{metric_name}/test', metric_value, prog_bar=True, rank_zero_only=True)
                 self.metrics.setdefault(f'{metric_name}/test', []).append(metric_value)
+
+            # 清空分子缓存，避免长占内存
+            self._test_pred_mols.clear()
+            self._test_true_mols.clear()
+            self._test_true_frags.clear()
+
+
 
     def generate_animation(self, chain_batch, node_mask, batch_i):
         batch_indices, mol_indices = utils.get_batch_idx_for_animation(self.batch_size, batch_i)
@@ -468,88 +442,227 @@ class DDPM(pl.LightningModule):
             save_xyz_file(chain_output, one_hot, positions, chain_node_mask, names=names, is_geom=self.is_geom)
             visualize_chain(chain_output, wandb=wandb, mode=name, is_geom=self.is_geom)
 
-    def sample_and_analyze(self, dataloader):
-        pred_molecules = []
-        true_molecules = []
-        true_fragments = []
+    @staticmethod
+    def _to_cpu_tensor(x):
+        import torch
+        if torch.is_tensor(x):
+            return x.detach().cpu()
+        elif isinstance(x, (float, int)):
+            return torch.tensor(x, dtype=torch.float32)
+        else:
+            # 如果还有 numpy 标量或其他可转数值，兜底转成 float 再包一层 tensor
+            try:
+                return torch.tensor(float(x), dtype=torch.float32)
+            except Exception:
+                raise TypeError(f"Metric value type not supported: {type(x)}")
 
-        for b, data in tqdm(enumerate(dataloader), total=len(dataloader), desc='Sampling'):
+    @torch.no_grad()
+    def _eval_step_common(self, data, stage: str, batch_idx, *, do_sampling: bool):
+        # ===== 1) 每个 epoch 都要的：前向 + 指标 =====
+        delta_log_px, kl_prior, loss_t, loss_0, l2_loss, noise_t, noise_0 = self.forward(
+            data, training=False
+        )
+        vlb_loss = kl_prior + loss_t + loss_0 - delta_log_px
+        loss = l2_loss if self.loss_type == 'l2' else vlb_loss
+
+        metrics_dict = {
+            'loss': loss,
+            'delta_log_px': delta_log_px,
+            'kl_prior': kl_prior,
+            'loss_term_t': loss_t,
+            'loss_term_0': loss_0,
+            'l2_loss': l2_loss,
+            'vlb_loss': vlb_loss,
+            'noise_t': noise_t,
+            'noise_0': noise_0,
+        }
+
+        # 缓存 step 标量（每个 epoch 都会做）
+        detached = {k: self._to_cpu_tensor(v) for k, v in metrics_dict.items()}
+        if stage == 'val':
+            self._val_step_outputs.append(detached)
+        else:
+            self._test_step_outputs.append(detached)
+
+        # ===== 2) 仅在周期到达时做：采样/结构指标 =====
+        if do_sampling and self.trainer.is_global_zero:
             atom_mask = data['atom_mask']
             fragment_mask = data['fragment_mask']
-
-            # Save molecules without pockets
             if '.' in self.train_data_prefix:
-                atom_mask = data['atom_mask'] - data['pocket_mask']
+                pocket = data['pocket_mask'].bool()
+                atom_mask = (data['atom_mask'].bool() & (~pocket)).to(data['atom_mask'].dtype)
                 fragment_mask = data['fragment_only_mask']
 
+
             true_molecules_batch = build_molecules(
-                data['one_hot'],
-                data['positions'],
-                atom_mask,
+                data['one_hot'].detach().cpu(),
+                data['positions'].detach().cpu(),
+                atom_mask.detach().cpu(),
                 is_geom=self.is_geom,
             )
             true_fragments_batch = build_molecules(
-                data['one_hot'],
-                data['positions'],
-                fragment_mask,
+                data['one_hot'].detach().cpu(),
+                data['positions'].detach().cpu(),
+                fragment_mask.detach().cpu(),
                 is_geom=self.is_geom,
             )
 
+            # debug
+            true_valid = [int(metrics.is_valid(t)) for t in true_molecules_batch]
+            self.print({"E": int(self.current_epoch),
+                        "true_len": len(true_molecules_batch),
+                        "true_valid_total": sum(true_valid)})
+            made_pred = 0
+            ###
+            
             for sample_idx in tqdm(range(self.n_stability_samples)):
                 try:
                     chain_batch, node_mask = self.sample_chain(data, keep_frames=self.FRAMES)
                 except utils.FoundNaNException as e:
                     for idx in e.x_h_nan_idx:
                         smiles = data['name'][idx]
-                        print(f'FoundNaNException: [xh], e={self.current_epoch}, b={b}, i={idx}: {smiles}')
+                        print(f'FoundNaNException: [xh], e={self.current_epoch}, b={batch_idx}, i={idx}: {smiles}')
                     for idx in e.only_x_nan_idx:
                         smiles = data['name'][idx]
-                        print(f'FoundNaNException: [x ], e={self.current_epoch}, b={b}, i={idx}: {smiles}')
+                        print(f'FoundNaNException: [x ], e={self.current_epoch}, b={batch_idx}, i={idx}: {smiles}')
                     for idx in e.only_h_nan_idx:
                         smiles = data['name'][idx]
-                        print(f'FoundNaNException: [ h], e={self.current_epoch}, b={b}, i={idx}: {smiles}')
+                        print(f'FoundNaNException: [ h], e={self.current_epoch}, b={batch_idx}, i={idx}: {smiles}')
                     continue
 
-                # Get final molecules from chains – for computing metrics
                 x, h = utils.split_features(
                     z=chain_batch[0],
                     n_dims=self.n_dims,
                     num_classes=self.num_classes,
                     include_charges=self.include_charges,
                 )
-
-                # Save molecules without pockets
                 if '.' in self.train_data_prefix:
-                    node_mask = node_mask - data['pocket_mask']
+                    pocket = data['pocket_mask'].bool()
+                    node_mask = (node_mask.bool() & (~pocket)).to(node_mask.dtype)
+                    # node_mask = node_mask - data['pocket_mask']
 
-                one_hot = h['categorical']
-                pred_molecules_batch = build_molecules(one_hot, x, node_mask, is_geom=self.is_geom)
+                pred_molecules_batch = build_molecules(
+                    h['categorical'].detach().cpu(),
+                    x.detach().cpu(),
+                    node_mask.detach().cpu(),
+                    is_geom=self.is_geom
+                )
 
-                # Adding only results for valid ground truth molecules
+                # debug
+                pred_valid = [int(metrics.is_valid(p)) for p in pred_molecules_batch]
+                self.print({"pred_len": len(pred_molecules_batch),
+                            "pred_valid_total": sum(pred_valid)})
+                made_pred += sum(pred_valid)
+                ###
+
+                buf_pred, buf_true, buf_frag = (
+                    (self._val_pred_mols, self._val_true_mols, self._val_true_frags)
+                    if stage == 'val' else
+                    (self._test_pred_mols, self._test_true_mols, self._test_true_frags)
+                )
+                
+                # debug
+                self.print({"zip_min_len": min(len(pred_molecules_batch), len(true_molecules_batch), len(true_fragments_batch))})
+                ###
                 for pred_mol, true_mol, frag in zip(pred_molecules_batch, true_molecules_batch, true_fragments_batch):
+                    # 把预测值和真实值分别存到self._val_pred_mols, self._val_true_mols, self._val_true_frags 或对应的_test*列表中
                     if metrics.is_valid(true_mol):
-                        pred_molecules.append(pred_mol)
-                        true_molecules.append(true_mol)
-                        true_fragments.append(frag)
+                        buf_pred.append(pred_mol)
+                        buf_true.append(true_mol)
+                        buf_frag.append(frag)
 
-                # Generate animation – will always do it for molecules with idx 0, 110 and 360
                 if self.samples_dir is not None and sample_idx == 0:
-                    self.generate_animation(chain_batch=chain_batch, node_mask=node_mask, batch_i=b)
+                    self.generate_animation(chain_batch=chain_batch, node_mask=node_mask, batch_i=batch_idx)
 
-        # Our own & DeLinker metrics
-        our_metrics = metrics.compute_metrics(
-            pred_molecules=pred_molecules,
-            true_molecules=true_molecules
-        )
-        delinker_metrics = delinker.get_delinker_metrics(
-            pred_molecules=pred_molecules,
-            true_molecules=true_molecules,
-            true_fragments=true_fragments
-        )
-        return {
-            **our_metrics,
-            **delinker_metrics
-        }
+            # debug
+            self.print({"made_pred_total": made_pred,
+                        "buf_pred_total": len(buf_pred)})
+            ###
+    
+        return metrics_dict
+
+    # def sample_and_analyze(self, dataloader):
+    #     pred_molecules = []
+    #     true_molecules = []
+    #     true_fragments = []
+
+    #     for b, data in tqdm(enumerate(dataloader), total=len(dataloader), desc='Sampling'):
+    #         atom_mask = data['atom_mask']
+    #         fragment_mask = data['fragment_mask']
+
+    #         # Save molecules without pockets
+    #         if '.' in self.train_data_prefix:
+    #             atom_mask = data['atom_mask'] - data['pocket_mask']
+    #             fragment_mask = data['fragment_only_mask']
+
+    #         true_molecules_batch = build_molecules(
+    #             data['one_hot'],
+    #             data['positions'],
+    #             atom_mask,
+    #             is_geom=self.is_geom,
+    #         )
+    #         true_fragments_batch = build_molecules(
+    #             data['one_hot'],
+    #             data['positions'],
+    #             fragment_mask,
+    #             is_geom=self.is_geom,
+    #         )
+
+    #         for sample_idx in tqdm(range(self.n_stability_samples)):
+    #             try:
+    #                 chain_batch, node_mask = self.sample_chain(data, keep_frames=self.FRAMES)
+    #             except utils.FoundNaNException as e:
+    #                 for idx in e.x_h_nan_idx:
+    #                     smiles = data['name'][idx]
+    #                     print(f'FoundNaNException: [xh], e={self.current_epoch}, b={b}, i={idx}: {smiles}')
+    #                 for idx in e.only_x_nan_idx:
+    #                     smiles = data['name'][idx]
+    #                     print(f'FoundNaNException: [x ], e={self.current_epoch}, b={b}, i={idx}: {smiles}')
+    #                 for idx in e.only_h_nan_idx:
+    #                     smiles = data['name'][idx]
+    #                     print(f'FoundNaNException: [ h], e={self.current_epoch}, b={b}, i={idx}: {smiles}')
+    #                 continue
+
+    #             # Get final molecules from chains – for computing metrics
+    #             x, h = utils.split_features(
+    #                 z=chain_batch[0],
+    #                 n_dims=self.n_dims,
+    #                 num_classes=self.num_classes,
+    #                 include_charges=self.include_charges,
+    #             )
+
+    #             # Save molecules without pockets
+    #             if '.' in self.train_data_prefix:
+    #                 node_mask = node_mask - data['pocket_mask']
+
+    #             one_hot = h['categorical']
+    #             pred_molecules_batch = build_molecules(one_hot, x, node_mask, is_geom=self.is_geom)
+
+    #             # Adding only results for valid ground truth molecules
+    #             for pred_mol, true_mol, frag in zip(pred_molecules_batch, true_molecules_batch, true_fragments_batch):
+    #                 if metrics.is_valid(true_mol):
+    #                     pred_molecules.append(pred_mol)
+    #                     true_molecules.append(true_mol)
+    #                     true_fragments.append(frag)
+
+    #             # Generate animation – will always do it for molecules with idx 0, 110 and 360
+    #             if self.samples_dir is not None and sample_idx == 0:
+    #                 self.generate_animation(chain_batch=chain_batch, node_mask=node_mask, batch_i=b)
+
+    #     # Our own & DeLinker metrics
+    #     our_metrics = metrics.compute_metrics(
+    #         pred_molecules=pred_molecules,
+    #         true_molecules=true_molecules
+    #     )
+    #     delinker_metrics = delinker.get_delinker_metrics(
+    #         pred_molecules=pred_molecules,
+    #         true_molecules=true_molecules,
+    #         true_fragments=true_fragments
+    #     )
+    #     return {
+    #         **our_metrics,
+    #         **delinker_metrics
+    #     }
 
     def sample_chain(self, data, sample_fn=None, keep_frames=None):
         if sample_fn is None:

@@ -19,7 +19,8 @@ is_main = int(os.environ.get("RANK", "0")) == 0
 if not is_main:
     wandb.init(mode="disabled") 
 else:
-    wandb.init(mode="offline")
+    wandb.init(settings=wandb.Settings(init_timeout=180))
+    # wandb.init(mode="offline")
 
 def find_last_checkpoint(checkpoints_dir):
     epoch2fname = [
@@ -118,6 +119,7 @@ def main(args):
         val_data_prefix=args.val_data_prefix,
         batch_size=args.batch_size,
         dataset_device='cpu',
+        is_demo=args.demo
     )
     checkpoint_callback = callbacks.ModelCheckpoint(
         dirpath=checkpoints_dir,
@@ -133,7 +135,7 @@ def main(args):
         devices='auto',
         num_sanity_val_steps=0,
         enable_progress_bar=args.enable_progress_bar,
-        strategy='ddp',
+        # strategy='ddp', # at h800
     )
 
     if args.resume is None:
@@ -222,6 +224,7 @@ if __name__ == '__main__':
     p.add_argument('--remove_anchors_context', action='store_true', default=False, help='Remove anchors context')
     p.add_argument('--graph_type', type=str, default='FC', help='FC, 4A, FC-4A, FC-10A-4A')
     p.add_argument('--seed', type=int, default=42, help='Random seed')
+    p.add_argument('--demo', action='store_true', default=False)
 
     disable_rdkit_logging()
 

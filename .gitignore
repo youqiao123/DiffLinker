@@ -9,5 +9,6 @@ formatted
 __pycache__
 test*
 slurm*
+*.log
 wandb
 samples

@@ -13,6 +13,19 @@ from src import const
 
 from pdb import set_trace
 
+def has_invalid_values(*arrays):
+    """Return True if any array contains non-finite values."""
+    for array in arrays:
+        if array is None:
+            continue
+        if isinstance(array, torch.Tensor):
+            if not torch.isfinite(array).all():
+                return True
+            continue
+        array_np = np.asarray(array)
+        if not np.isfinite(array_np).all():
+            return True
+    return False
 
 DEFAULT_DATALOADER_KWARGS = {
     'num_workers': 4,
@@ -78,6 +91,7 @@ class ZincDataset(Dataset):
 
         table = pd.read_csv(table_path)
         generator = tqdm(zip(table.iterrows(), read_sdf(fragments_path), read_sdf(linkers_path)), total=len(table))
+        filtered = 0
         for (_, row), fragments, linker in generator:
             uuid = row['uuid']
             name = row['molecule']
@@ -98,6 +112,21 @@ class ZincDataset(Dataset):
             fragment_mask = np.concatenate([np.ones_like(frag_charges), np.zeros_like(link_charges)])
             linker_mask = np.concatenate([np.zeros_like(frag_charges), np.ones_like(link_charges)])
 
+            if has_invalid_values(
+                frag_pos,
+                frag_one_hot,
+                frag_charges,
+                link_pos,
+                link_one_hot,
+                link_charges,
+                positions,
+                one_hot,
+                charges,
+            ):
+                generator.write(f'Skipping uuid={uuid} name={name} due to non-finite values')
+                filtered += 1
+                continue
+
             data.append({
                 'uuid': uuid,
                 'name': name,
@@ -110,12 +139,16 @@ class ZincDataset(Dataset):
                 'num_atoms': len(positions),
             })
 
+        if filtered:
+            print(f'Filtered {filtered} samples with non-finite values during preprocessing ({prefix}).')
+
         return data
 
 
 class MOADDataset(Dataset):
-    def __init__(self, data=None, data_path=None, prefix=None, device='cpu'):
+    def __init__(self, data=None, data_path=None, prefix=None, device='cpu', limit=None):
         assert (data is not None) or all(x is not None for x in (data_path, prefix, device))
+        print("start processing data")
         if data is not None:
             self.data = data
             return
@@ -129,7 +162,12 @@ class MOADDataset(Dataset):
 
         dataset_path = os.path.join(data_path, f'{prefix}_{pocket_mode}.pt')
         if os.path.exists(dataset_path):
+            print("start loading data")
             self.data = torch.load(dataset_path, map_location=device)
+            if limit is not None:
+                self.data = self.data[:limit]
+                # print(self.data[0])
+            print("finish loading data")
         else:
             print(f'Preprocessing dataset with prefix {prefix}')
             self.data = self.preprocess(data_path, prefix, pocket_mode, device)
@@ -160,6 +198,7 @@ class MOADDataset(Dataset):
             zip(table.iterrows(), read_sdf(fragments_path), read_sdf(linkers_path), pockets),
             total=len(table)
         )
+        filtered = 0
         for (_, row), fragments, linker, pocket_data in generator:
             pdb = row['molecule_name'].split('_')[0]
             if 'MOAD' in prefix.upper() and pdb in {
@@ -176,7 +215,8 @@ class MOADDataset(Dataset):
             link_pos, link_one_hot, link_charges = parse_molecule(linker, is_geom=is_geom)
 
             # Parsing pocket data
-            pocket_pos = pocket_data[f'{pocket_mode}_coord']
+            # pocket_pos = pocket_data[f'{pocket_mode}_coord']
+            pocket_pos = np.asarray(pocket_data[f'{pocket_mode}_coord'])
             pocket_one_hot = []
             pocket_charges = []
             for atom_type in pocket_data[f'{pocket_mode}_types']:
@@ -219,6 +259,24 @@ class MOADDataset(Dataset):
                 np.zeros_like(link_charges)
             ])
 
+            if has_invalid_values(
+                frag_pos,
+                frag_one_hot,
+                frag_charges,
+                link_pos,
+                link_one_hot,
+                link_charges,
+                pocket_pos,
+                pocket_one_hot,
+                pocket_charges,
+                positions,
+                one_hot,
+                charges,
+            ):
+                generator.write(f'Skipping uuid={uuid} name={name} due to non-finite values')
+                filtered += 1
+                continue
+
             data.append({
                 'uuid': uuid,
                 'name': name,
@@ -232,6 +290,9 @@ class MOADDataset(Dataset):
                 'linker_mask': torch.tensor(linker_mask, dtype=const.TORCH_FLOAT, device=device),
                 'num_atoms': len(positions),
             })
+
+        if filtered:
+            print(f'Filtered {filtered} samples with non-finite values during preprocessing ({prefix}, {pocket_mode}).')
 
         return data
 
@@ -272,6 +333,7 @@ class OptimisedMOADDataset(MOADDataset):
             zip(table.iterrows(), read_sdf(fragments_path), read_sdf(linkers_path), pockets),
             total=len(table)
         )
+        filtered = 0
         for (_, row), fragments, linker, pocket_data in generator:
             uuid = row['uuid']
             name = row['molecule']
@@ -347,10 +409,11 @@ def collate(batch):
     out = {}
 
     # Filter out big molecules
-    # if 'pocket_mask' not in batch[0].keys():
-    #    batch = [data for data in batch if data['num_atoms'] <= 50]
-    # else:
-    #    batch = [data for data in batch if data['num_atoms'] <= 1000]
+    if 'pocket_mask' not in batch[0].keys():
+       batch = [data for data in batch if data['num_atoms'] <= 50]
+    else:
+       # TODO：用protac数据训练的时候这一条要去掉！
+       batch = [data for data in batch if data['num_atoms'] <= 1000]
 
     for data in batch:
         for key, value in data.items():
@@ -360,7 +423,9 @@ def collate(batch):
         if key in const.DATA_LIST_ATTRS:
             continue
         if key in const.DATA_ATTRS_TO_PAD:
+            # NOTE: 瓶颈似乎真在这里，某些epoch处理速度特别慢，内存消耗可能也很大
             out[key] = torch.nn.utils.rnn.pad_sequence(value, batch_first=True, padding_value=0)
+            # print(1)
             continue
         raise Exception(f'Unknown batch key: {key}')
 
@@ -500,6 +565,7 @@ class DiffLinkerDataModule(pl.LightningDataModule):
         pin_memory=DEFAULT_DATALOADER_KWARGS['pin_memory'],
         persistent_workers=DEFAULT_DATALOADER_KWARGS['persistent_workers'],
         prefetch_factor=DEFAULT_DATALOADER_KWARGS['prefetch_factor'],
+        is_demo=False
     ):
         super().__init__()
         self.data_path = data_path
@@ -519,11 +585,14 @@ class DiffLinkerDataModule(pl.LightningDataModule):
         self.val_dataset = None
         self.test_dataset = None
 
+        self.is_demo = is_demo
+
     def _instantiate_dataset(self, prefix):
         if prefix is None:
             return None
         dataset_cls = MOADDataset if '.' in prefix else ZincDataset
-        return dataset_cls(data_path=self.data_path, prefix=prefix, device=self.dataset_device)
+        limit = 32 if self.is_demo else None
+        return dataset_cls(data_path=self.data_path, prefix=prefix, device=self.dataset_device, limit=limit)
 
     def prepare_data(self):
         # Trigger preprocessing and cached dataset creation.

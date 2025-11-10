@@ -627,6 +627,10 @@ class DynamicsWithPockets(Dynamics):
 
     @staticmethod
     def get_dist_edges_4A(x, node_mask, batch_mask):
+        device = x.device
+        node_mask = node_mask.to(device)
+        batch_mask = batch_mask.to(device)
+
         node_mask = node_mask.squeeze().bool()
         batch_adj = (batch_mask[:, None] == batch_mask[None, :])
         nodes_adj = (node_mask[:, None] & node_mask[None, :])
