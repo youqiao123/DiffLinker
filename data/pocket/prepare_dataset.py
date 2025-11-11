@@ -350,8 +350,8 @@ def process_sdf(sdf_path, table, proteins_path, progress=True):
 
         # Creating protein pocket
         pdb_code = mol_name.split('_')[0]
-        pdb_path = os.path.join(proteins_path, f'{pdb_code}_protein.pdb')
-        pocket_path = os.path.join(f'/home/qianyouqiao/sc_complexes/{pdb_code}/{pdb_code}_pocket.pdb')
+        pocket_path = os.path.join(f'/home/qianyouqiao/sc_complexes/{pdb_code}/{pdb_code}_pocket_removeH.pdb')
+        # pdb_path = os.path.join(proteins_path, f'{pdb_code}_protein.pdb')
         # pocket = get_pocket(mol, pdb_path)
         pocket = get_pocket(pocket_path)
 

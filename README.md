@@ -152,8 +152,8 @@ mkdir -p logs
 Run trainig:
 ```shell
 export CUDA_VISIBLE_DEVICES=7
-nohup python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml > run09.log 2>&1 &
-python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml --demo > run09.log 2>&1 
+nohup python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml > run11.log 2>&1 &
+python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml --demo > run11.log 2>&1 
 python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml
 
 

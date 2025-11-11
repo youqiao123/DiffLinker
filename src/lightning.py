@@ -383,6 +383,8 @@ class DDPM(pl.LightningModule):
                 **delinker.get_delinker_metrics(self._val_pred_mols, self._val_true_mols, self._val_true_frags),
             }
             for metric_name, metric_value in sampling_results.items():
+                # TODO: 修改run09报错
+                self.metrics.setdefault(f'{metric_name}/val', []).append(metric_value)
                 self.log(f'{metric_name}/val', metric_value, prog_bar=True, rank_zero_only=True)
 
         if (self.current_epoch + 1) % self.test_epochs == 0:
@@ -727,6 +729,7 @@ class DDPM(pl.LightningModule):
     def configure_optimizers(self):
         return torch.optim.AdamW(self.edm.parameters(), lr=self.lr, amsgrad=True, weight_decay=1e-12)
 
+    # TODO
     def compute_best_validation_metrics(self):
         loss = self.metrics[f'validity_and_connectivity/val']
         best_epoch = np.argmax(loss)
