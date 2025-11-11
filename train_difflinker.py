@@ -19,8 +19,8 @@ is_main = int(os.environ.get("RANK", "0")) == 0
 if not is_main:
     wandb.init(mode="disabled") 
 else:
-    wandb.init(settings=wandb.Settings(init_timeout=180))
-    # wandb.init(mode="offline")
+    # wandb.init(settings=wandb.Settings(init_timeout=180))
+    wandb.init(mode="offline")
 
 def find_last_checkpoint(checkpoints_dir):
     epoch2fname = [
@@ -135,7 +135,7 @@ def main(args):
         devices='auto',
         num_sanity_val_steps=0,
         enable_progress_bar=args.enable_progress_bar,
-        # strategy='ddp', # at h800
+        strategy='ddp', 
     )
 
     if args.resume is None:
