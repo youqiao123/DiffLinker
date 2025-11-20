@@ -4,7 +4,7 @@ import torch
 
 from torch.utils.data import DataLoader
 
-from src.datasets import DEFAULT_DATALOADER_KWARGS, collate
+from src.datasets import DEFAULT_DATALOADER_KWARGS, collate, DiffLinkerDataModule
 from src.lightning import DDPM
 from src.visualizer import save_xyz_file, visualize_chain
 from tqdm import tqdm
@@ -37,19 +37,38 @@ if args.data is not None:
 
 model = model.eval().to(args.device)
 model.setup(stage='val')
-dataloader_kwargs = {
-    'batch_size': 32,
-    'collate_fn': collate,
-    'shuffle': False,
-    **DEFAULT_DATALOADER_KWARGS,
-}
-if dataloader_kwargs['num_workers'] == 0:
-    dataloader_kwargs.pop('persistent_workers', None)
-    dataloader_kwargs.pop('prefetch_factor', None)
-dataloader = DataLoader(model.val_dataset, **dataloader_kwargs)
+
+# Getting the dataloader
+datamodule = DiffLinkerDataModule(
+    data_path=args.data,
+    test_data_prefix=args.prefix,
+    batch_size=4,
+    num_workers=4,
+    dataset_device='cpu'
+)
+datamodule.setup(stage='test')
+dataloader = datamodule.test_dataloader()
+print(f'Dataloader contains {len(dataloader)} batches')
+
+# dataloader_kwargs = {
+#     'batch_size': 32,
+#     'collate_fn': collate,
+#     'shuffle': False,
+#     **DEFAULT_DATALOADER_KWARGS,
+# }
+# if dataloader_kwargs['num_workers'] == 0:
+#     dataloader_kwargs.pop('persistent_workers', None)
+#     dataloader_kwargs.pop('prefetch_factor', None)
+# dataloader = DataLoader(model.val_dataset, **dataloader_kwargs)
 
 start = 0
 for data in tqdm(dataloader):
+    data = model.transfer_batch_to_device(
+        data,
+        device=args.device,
+        dataloader_idx=0, 
+    )
+
     chain_batch, node_mask = model.sample_chain(data, keep_frames=args.keep_frames)
     for i in tqdm(range(len(data['positions']))):
         chain = chain_batch[:, i, :, :]

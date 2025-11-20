@@ -124,7 +124,13 @@ class DDPM(pl.LightningModule):
         self.linker_size_sampler = DistributionNodes(LINKER_SIZE_DIST)
 
     def setup(self, stage: Optional[str] = None):
-        datamodule = getattr(self.trainer, 'datamodule', None)
+        trainer = getattr(self, "_trainer", None)
+        if trainer is None:
+            # 说明当前模型没有挂在 Trainer 上（例如在 sample.py 中单独使用）
+            # 此时如果 setup 只是做和 datamodule 相关的事，可以直接跳过
+            return
+        
+        datamodule = getattr(trainer, 'datamodule', None)
         if datamodule is not None:
             if stage in (None, 'fit'):
                 self.train_dataset = getattr(datamodule, 'train_dataset', None)
@@ -338,8 +344,8 @@ class DDPM(pl.LightningModule):
 
 
     def validation_step(self, data, batch_idx, *args):
-        self.print(f"[VAL_STEP] epoch={self.current_epoch} global_step={self.global_step} "
-                   f"rank0={self.trainer.is_global_zero}")
+        # self.print(f"[VAL_STEP] epoch={self.current_epoch} global_step={self.global_step} "
+        #            f"rank0={self.trainer.is_global_zero}")
         do_sampling = ((self.current_epoch + 1) % self.test_epochs == 0)
         return self._eval_step_common(data, stage='val', batch_idx=batch_idx, do_sampling=do_sampling)
 

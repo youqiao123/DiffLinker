@@ -53,8 +53,8 @@ def check_fragmentation(mol, bond_idxs, level):
         frag_mols = defaultdict(list)
         for f in frags:
             f_smiles = Chem.MolToSmiles(f)
-            anchor_nums = f_smiles.count('*')
-            frag_matrix[anchor_nums].append(f.GetNumAtoms() - anchor_nums)
+            anchor_nums = f_smiles.count('*')  # 按照dummy_atom的数量给切割好的原子分类
+            frag_matrix[anchor_nums].append(f.GetNumAtoms() - anchor_nums)  # 片段原子数
             frag_smiles[anchor_nums].append(f_smiles)
             frag_mols[anchor_nums].append(f)
         valid = (
@@ -112,11 +112,11 @@ def fragment_by_brics(mol, mol_name, start, level, current_bond_idxs, min_frag, 
         valid, frag_matrix, frag_smiles, frag_mols = check_fragmentation(mol, current_bond_idxs, level)
         if valid:
             if (min(frag_matrix[1]) >= min_frag and min(frag_matrix[level]) >= min_linker):
-                if level >= num_frags_min - 1:
+                if level >= num_frags_min - 1:  # 如果切割次数(level)大于等于"最小片段数量"-1，直接添加check_fragmentation的切割结果
                     # print('fragment:', frag_smiles[1],'\tlinker:', frag_smiles[level])
                     filtered_brics_results.append([mol_name, Chem.MolToSmiles(mol), frag_smiles[level][0], '.'.join(frag_smiles[1]), 'brics'])
                     filtered_brics_mols.append([frag_mols[level][0], recursive_merge(frag_mols[1])])
-                if level < num_frags_max - 1:
+                if level < num_frags_max - 1: # 如果level已经小于"最小片段数量"-1，且小于“最大片段数”-1，进行递归，直到level大于等于"最小片段数量"-1
                     level += 1
                     filtered_brics_results_, filtered_brics_mols_ = fragment_by_brics(mol, mol_name, i+1,level,current_bond_idxs,min_frag, min_linker, num_frags_min, num_frags_max, bonds)
                     level -= 1

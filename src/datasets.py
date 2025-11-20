@@ -404,7 +404,6 @@ class OptimisedMOADDataset(MOADDataset):
             'protein_level_data': protein_level_data,
         }
 
-
 def collate(batch):
     out = {}
 
@@ -414,21 +413,42 @@ def collate(batch):
     else:
        # TODO：用protac数据训练的时候这一条要去掉！
        batch = [data for data in batch if data['num_atoms'] <= 1000]
-
-    for data in batch:
-        for key, value in data.items():
-            out.setdefault(key, []).append(value)
-
-    for key, value in out.items():
+    
+    # 提前计算每个批次中的最大原子数，以避免多次pad_sequence调用
+    if not batch:  # 防止空批次
+        return out
+    
+    # 计算批次中最大原子数
+    max_atoms = max(data['num_atoms'] for data in batch)
+    
+    # 收集每个键的值并分配批次大小的预分配张量
+    for key in batch[0].keys():
         if key in const.DATA_LIST_ATTRS:
+            out[key] = [data[key] for data in batch]
             continue
+            
         if key in const.DATA_ATTRS_TO_PAD:
-            # NOTE: 瓶颈似乎真在这里，某些epoch处理速度特别慢，内存消耗可能也很大
-            out[key] = torch.nn.utils.rnn.pad_sequence(value, batch_first=True, padding_value=0)
-            # print(1)
+            # 获取第一个元素的形状和类型以创建适当大小的零张量
+            first_elem = batch[0][key]
+            elem_shape = first_elem.shape[1:]  # 去掉原子维度
+            elem_dtype = first_elem.dtype
+            device = first_elem.device
+            
+            # 预分配整个批次的张量
+            batch_size = len(batch)
+            padded_tensor = torch.zeros((batch_size, max_atoms) + elem_shape, 
+                                       dtype=elem_dtype, device=device)
+            
+            # 手动填充每个样本
+            for i, data in enumerate(batch):
+                num_atoms = data['num_atoms']
+                padded_tensor[i, :num_atoms] = data[key]
+            
+            out[key] = padded_tensor
             continue
+            
         raise Exception(f'Unknown batch key: {key}')
-
+    
     atom_mask = (out['fragment_mask'].bool() | out['linker_mask'].bool()).to(const.TORCH_INT)
     out['atom_mask'] = atom_mask[:, :, None]
 
@@ -452,6 +472,54 @@ def collate(batch):
             out[key] = out[key][:, :, None]
 
     return out
+
+# def collate(batch):
+#     out = {}
+
+#     # Filter out big molecules
+#     if 'pocket_mask' not in batch[0].keys():
+#        batch = [data for data in batch if data['num_atoms'] <= 50]
+#     else:
+#        # TODO：用protac数据训练的时候这一条要去掉！
+#        batch = [data for data in batch if data['num_atoms'] <= 1000]
+
+#     for data in batch:
+#         for key, value in data.items():
+#             out.setdefault(key, []).append(value)
+
+#     for key, value in out.items():
+#         if key in const.DATA_LIST_ATTRS:
+#             continue
+#         if key in const.DATA_ATTRS_TO_PAD:
+#             # NOTE: 瓶颈似乎真在这里，某些epoch处理速度特别慢，内存消耗可能也很大
+#             out[key] = torch.nn.utils.rnn.pad_sequence(value, batch_first=True, padding_value=0)
+#             # print(1)
+#             continue
+#         raise Exception(f'Unknown batch key: {key}')
+
+#     atom_mask = (out['fragment_mask'].bool() | out['linker_mask'].bool()).to(const.TORCH_INT)
+#     out['atom_mask'] = atom_mask[:, :, None]
+
+#     batch_size, n_nodes = atom_mask.size()
+
+#     # In case of MOAD edge_mask is batch_idx
+#     if 'pocket_mask' in batch[0].keys():
+#         batch_mask = torch.arange(batch_size, dtype=const.TORCH_INT).repeat_interleave(n_nodes)
+#         out['edge_mask'] = batch_mask
+#     else:
+#         # edge_mask = atom_mask[:, None, :] * atom_mask[:, :, None]
+#         # diag_mask = ~torch.eye(edge_mask.size(1), dtype=const.TORCH_INT, device=atom_mask.device).unsqueeze(0)
+#         # edge_mask *= diag_mask
+#         # out['edge_mask'] = edge_mask.view(batch_size * n_nodes * n_nodes, 1)
+#         edge_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
+#         edge_mask.diagonal(dim1=1, dim2=2).zero_()
+#         out['edge_mask'] = edge_mask.view(batch_size * n_nodes * n_nodes, 1)
+
+#     for key in const.DATA_ATTRS_TO_ADD_LAST_DIM:
+#         if key in out.keys():
+#             out[key] = out[key][:, :, None]
+
+#     return out
 
 
 def collate_with_fragment_edges(batch):
@@ -554,7 +622,7 @@ class DiffLinkerDataModule(pl.LightningDataModule):
     def __init__(
         self,
         data_path,
-        train_data_prefix,
+        train_data_prefix=None,
         val_data_prefix=None,
         test_data_prefix=None,
         batch_size=32,
@@ -609,7 +677,7 @@ class DiffLinkerDataModule(pl.LightningDataModule):
             if self.val_data_prefix is not None and self.val_dataset is None:
                 self.val_dataset = self._instantiate_dataset(self.val_data_prefix)
 
-        if stage in {'validate', None}:
+        if stage in {'val', 'validate', None}:
             if self.val_data_prefix is not None and self.val_dataset is None:
                 self.val_dataset = self._instantiate_dataset(self.val_data_prefix)
 

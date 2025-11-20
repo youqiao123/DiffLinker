@@ -48,23 +48,23 @@ def process_pdbbind_ligand(input_dir, ligands_dir):
         pdb_code = ligand_path.stem[:4]
 
         try:
-            mol = Chem.SDMolSupplier(str(ligand_path), sanitize=False)[0]
+            mol = Chem.SDMolSupplier(str(ligand_path), sanitize=True)[0]
             mol = Chem.RemoveAllHs(mol)
-            rw_mol = Chem.RWMol(mol)
-            atoms_to_remove = []
-            # TODO 预处理 去掉卤素原子这一步有必要吗
-            for atom in rw_mol.GetAtoms():
-                if atom.GetSymbol() in ["F", "Cl", "Br", "I"]:
-                    atoms_to_remove.append(atom.GetIdx())
-            for idx in sorted(atoms_to_remove, reverse=True):
-                rw_mol.RemoveAtom(idx)
-            mol = rw_mol.GetMol()
+            # rw_mol = Chem.RWMol(mol)
+            # atoms_to_remove = []
+            # # TODO 预处理 去掉卤素原子这一步有必要吗
+            # for atom in rw_mol.GetAtoms():
+            #     if atom.GetSymbol() in ["F", "Cl", "Br", "I"]:
+            #         atoms_to_remove.append(atom.GetIdx())
+            # for idx in sorted(atoms_to_remove, reverse=True):
+            #     rw_mol.RemoveAtom(idx)
+            # mol = rw_mol.GetMol()
         except Exception as e:
             print(f'Problem reading ligands PDB={pdb_code}: {e}')
             continue
 
         out_ligand_path = ligands_path / f'{pdb_code}.mol'
-        Chem.MolToMolFile(mol, str(out_ligand_path), kekulize=False)
+        Chem.MolToMolFile(mol, str(out_ligand_path), kekulize=True)
 
 
 def run_pdbbind(input_dir, proteins_dir, ligands_dir):

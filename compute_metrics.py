@@ -4,6 +4,7 @@ import csv
 import numpy as np
 import pandas as pd
 import sys
+import os
 
 from networkx.algorithms import isomorphism
 from rdkit import Chem
@@ -312,13 +313,14 @@ summary_table.to_csv(summary_path, index=False)
 
 sdf_path = gen_smi_file[:-3] + 'sdf'
 pred_mol_3d = Chem.SDMolSupplier(sdf_path)
+datasets = os.environ['DATASET_PATH']
 
 if method == 'diffusion' and data_set == 'ZINC':
     # Use SMILES of test set generated for molecules processed by OpenBabel
     # (for consistency with other evaluation metrics)
     # Because SMILES produced by our model are also based on OpenBabel
-    true_smi_path = 'datasets/zinc_final_test_smiles.smi'
-    true_mol_path = 'datasets/zinc_final_test_molecules.sdf'
+    true_smi_path = f'{datasets}/zinc_final_test_smiles.smi'
+    true_mol_path = f'{datasets}/zinc_final_test_molecules.sdf'
     true_smi = pd.read_csv(true_smi_path, sep=' ', names=['mol', 'frag']).mol.values
     true_mol_3d = Chem.SDMolSupplier(true_mol_path)
     true_smi2mol3d = dict(zip(true_smi, true_mol_3d))
@@ -326,8 +328,8 @@ elif method == 'diffusion' and data_set == 'CASF':
     # Use SMILES of test set generated for molecules processed by OpenBabel
     # (for consistency with other evaluation metrics)
     # Because SMILES produced by our model are also based on OpenBabel
-    true_smi_path = 'datasets/casf_final_test_smiles.smi'
-    true_mol_path = 'datasets/casf_final_test_molecules.sdf'
+    true_smi_path = f'{datasets}/casf_final_test_smiles.smi'
+    true_mol_path = f'{datasets}/casf_final_test_molecules.sdf'
     true_smi = pd.read_csv(true_smi_path, sep=' ', names=['mol', 'frag']).mol.values
     true_mol_3d = Chem.SDMolSupplier(true_mol_path)
     true_smi2mol3d = dict(zip(true_smi, true_mol_3d))
@@ -335,8 +337,8 @@ elif method == 'diffusion' and data_set == 'GEOM':
     # Use SMILES of test set generated for molecules processed by OpenBabel
     # (for consistency with other evaluation metrics)
     # Because SMILES produced by our model are also based on OpenBabel
-    true_smi_path = 'datasets/geom_multifrag_test_smiles.smi'
-    true_mol_path = 'datasets/geom_multifrag_test_molecules.sdf'
+    true_smi_path = f'{datasets}/geom_multifrag_test_smiles.smi'
+    true_mol_path = f'{datasets}/geom_multifrag_test_molecules.sdf'
     true_smi = pd.read_csv(true_smi_path, sep=' ', names=['mol', 'frag']).mol.values
     true_mol_3d = Chem.SDMolSupplier(true_mol_path)
     true_smi2mol3d = dict(zip(true_smi, true_mol_3d))
@@ -345,9 +347,9 @@ elif method == 'diffusion' and data_set in ['MOAD', 'pdbbind']:
     # (for consistency with other evaluation metrics)
     # Because SMILES produced by our model are also based on OpenBabel
     prefix = 'MOAD' if data_set == 'MOAD' else 'pdbbind'
-    true_smi_path = f'datasets/{prefix}_test_smiles.smi'
+    true_smi_path = f'{datasets}/{prefix}_test_smiles.smi'
     # true_mol_path = f'datasets/{prefix}_test_molecules.sdf'
-    true_mol_path = f'datasets/{prefix}_test_mol.sdf'
+    true_mol_path = f'{datasets}/{prefix}_test_mol.sdf'
     true_smi = pd.read_csv(true_smi_path, sep=' ', names=['mol', 'frag']).mol.values
     true_mol_3d = Chem.SDMolSupplier(true_mol_path)
     true_smi2mol3d = dict(zip(true_smi, true_mol_3d))

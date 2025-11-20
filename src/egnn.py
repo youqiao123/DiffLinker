@@ -99,9 +99,9 @@ class GCL(nn.Module):
 
 '''
 EquivariantUpdate:
-这个类用于实现等变更新
+这个类用于实现等变更新，不更新边和节点的特征，但是会更新坐标
 
-具体如何实现等边更新：
+具体如何实现等变更新：
 
 1. 输入特征的构造
 input_tensor = torch.cat([h[row], h[col], edge_attr], dim=1)

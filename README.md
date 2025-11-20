@@ -152,8 +152,8 @@ mkdir -p logs
 Run trainig:
 ```shell
 export CUDA_VISIBLE_DEVICES=7
-nohup python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml > run11.log 2>&1 &
-python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml --demo > run11.log 2>&1 
+nohup python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml > run13.log 2>&1 &
+python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml > run13.log 2>&1 &
 python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml
 
 
@@ -213,8 +213,9 @@ mkdir -p trajectories
 
 If you want to sample 250 linkers for each input set of fragments, run the following:
 ```shell
+export CKPT_PATH=models/pockets_difflinker_pdbbind_qianyouqiao_pockets_difflinker_pdbbind_bs32_date12-11_time01-06-23.405860/pockets_difflinker_pdbbind_qianyouqiao_pockets_difflinker_pdbbind_bs32_date12-11_time01-06-23.405860_epoch=464.ckpt
 python -W ignore sample.py \
-                 --checkpoint models/zinc_difflinker.ckpt \
+                 --checkpoint $CKPT_PATH \
                  --linker_size_model models/zinc_size_gnn.ckpt \
                  --samples samples \
                  --data datasets \
@@ -226,13 +227,21 @@ You will be able to see `.xyz` files of the generated molecules in the directory
 
 如果对已有的数据集进行采样，则不需要提供linker_size_model，默认会使用数据集中真实的linker_size
 
+python -W ignore sample.py \
+                 --checkpoint $CKPT_PATH \
+                 --samples samples \
+                 --data ../pdbbind_processed_3 \
+                 --prefix pdbbind_test.full \
+                 --n_samples 2 \
+                 --device cuda:0
+
 If you want to sample linkers and save trajectories, run the following:
 ```shell
 python -W ignore sample_trajectories.py \
-                 --checkpoint models/pdbbind_1.ckpt \
+                 --checkpoint $CKPT_PATH \
                  --chains trajectories \
-                 --data datasets \
-                 --prefix pdbbind_test \
+                 --data ../pdbbind_processed_3 \
+                 --prefix pdbbind_test.full \
                  --keep_frames 10 \
                  --device cuda:0
 ```
@@ -249,7 +258,7 @@ mkdir -p datasets
 wget https://zenodo.org/record/7121448/files/zinc_final_test_smiles.smi?download=1 -O datasets/zinc_final_test_smiles.smi
 wget https://zenodo.org/record/7121448/files/zinc_final_test_molecules.sdf?download=1 -O datasets/zinc_final_test_molecules.sdf
 wget https://zenodo.org/record/7121448/files/zinc_final_train_linkers.smi?download=1 -O datasets/zinc_final_train_linkers.smi 
-```
+``` 
 
 Next, you need to run OpenBabel to reformat the data:
 ```shell
@@ -257,9 +266,9 @@ mkdir -p formatted
 python -W ignore reformat_data_obabel.py \
                  --samples samples \
                  --dataset pdbbind_test.full \
-                 --true_smiles_path datasets/pdbbind_test_smiles.smi \
-                 --checkpoint pdbbind_1 \
-                 --formatted formatted \
+                 --true_smiles_path /home/qianyouqiao/pdbbind_processed_3/pdbbind_test_smiles.smi \
+                 --checkpoint $CKPT_PATH \
+                 --formatted formatted 
 ```
 
 Then you can run evaluation scripts:
@@ -279,12 +288,12 @@ All the metrics will be saved in the directory `./formatted`.
 
 ```shell
 python evaluate_ckpt.py \
-                 --checkpoint models/pdbbind_1.ckpt \
+                 --checkpoint $CKPT_PATH \
                  --dataset-name pdbbind \
                  --dataset-prefix pdbbind_test.full \
-                #  --experiment-name pdbbind_2 \ 一般不需要设置experiment-name，除非想再采样一次来评估。加之
-                 --test-table datasets/pdbbind_test_table.csv \
-                 --train-linkers-sdf datasets/pdbbind_train_link.sdf
+                 --test-table ../pdbbind_processed_3/pdbbind_test_table.csv \
+                 --train-linkers-sdf ../pdbbind_processed_3/pdbbind_train_link.sdf
+                 #  --experiment-name pdbbind_2 \ 一般不需要设置experiment-name，除非想再采样一次来评估。
 ```
 
 

@@ -10,7 +10,7 @@ unzip every_part_b.zip
 
 Clean and split raw PL-complexes:
 ```
-export PROCESSED_DIR='/home/qianyouqiao/pdbbind_processed_3'
+export PROCESSED_DIR='/home/qianyouqiao/pdbbind_processed_2'
 export RAW_PDBBIND='/home/qianyouqiao/sc_complexes'
 
 python -W ignore clean_and_split.py --in-dir $RAW_PDBBIND --proteins-dir $PROCESSED_DIR/proteins --ligands-dir $PROCESSED_DIR/ligands

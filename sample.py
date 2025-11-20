@@ -7,7 +7,7 @@ from src import utils
 from src.lightning import DDPM
 from src.linker_size_lightning import SizeClassifier
 from src.visualizer import save_xyz_file
-from src.datasets import collate, collate_with_fragment_edges, MOADDataset
+from src.datasets import collate, collate_with_fragment_edges, MOADDataset, DiffLinkerDataModule
 from tqdm import tqdm
 
 from pdb import set_trace
@@ -95,15 +95,31 @@ if args.n_steps is not None:
     model.edm.T = args.n_steps
 
 # Setting up the model
-model = model.eval().to(args.device)
-model.torch_device = args.device
-model.setup(stage='val')
+# model = model.eval().to(args.device)
+# model.torch_device = args.device
+# model.setup(stage='val')
+model = DDPM.load_from_checkpoint(args.checkpoint, map_location=args.device)
 
 # Getting the dataloader
-dataloader = model.val_dataloader(collate_fn=collate_fn)
+datamodule = DiffLinkerDataModule(
+    data_path=args.data,
+    test_data_prefix=args.prefix,
+    batch_size=8,
+    num_workers=4,
+    dataset_device='cpu'
+)
+datamodule.setup(stage='test')
+dataloader = datamodule.test_dataloader()
+# dataloader = model.val_dataloader(collate_fn=collate_fn)
 print(f'Dataloader contains {len(dataloader)} batches')
 
 for batch_idx, data in enumerate(dataloader):
+    data = model.transfer_batch_to_device(
+        data,
+        device=args.device,
+        dataloader_idx=0,  # 这里只有一个 dataloader，用 0 即可
+    )
+
     uuids = []
     true_names = []
     frag_names = []

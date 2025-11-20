@@ -53,7 +53,7 @@ def update_fragment(frag):
     if len(exits) > 1:
         raise Exception('Found more than one exits in fragment')
     exit = exits[0]
-
+ 
     bonds = exit.GetBonds()
     if len(bonds) > 1:
         raise Exception('Exit atom has more than 1 bond')
@@ -62,7 +62,7 @@ def update_fragment(frag):
     exit_idx = exit.GetIdx()
     source_idx = bond.GetBeginAtomIdx()
     target_idx = bond.GetEndAtomIdx()
-    anchor_idx = source_idx if target_idx == exit_idx else target_idx
+    anchor_idx = source_idx if target_idx == exit_idx else target_idx  # anchor原子是dummy_atom(*)连着的那个原子
     set_anchor_flags(frag, anchor_idx)
 
     efragment = Chem.EditableMol(frag)
@@ -406,13 +406,14 @@ def run(
     molecules, fragments, linkers, pockets, out_table = process_sdf(sdf_path, table, proteins_path, progress)
 
     bad_idx = set()
-    dummy_smiles = 'OC(C1CCC(CS)CC1)N1CCC(CC2CCCCC2)CC1'
+    dummy_smiles = 'CC(C)[C@H]1[C@H](C(=O)N2CCC[C@H]2C(=O)N(C)C)SC2=N[C@@](C)(c3ccc(Cl)cc3)[C@@H](c3ccc(Cl)cc3)N21'
     with Chem.SDWriter(open(out_mol_path, 'w')) as writer:
         for i, mol in enumerate(molecules):
             try:
                 writer.write(mol)
             except:
                 bad_idx.add(i)
+                # 在出错时写入dummy分子，保证sdf文件结构与原始数据一致，方便索引
                 writer.write(Chem.MolFromSmiles(dummy_smiles))  # Dummy mol that will be filtered out
     with Chem.SDWriter(open(out_frag_path, 'w')) as writer:
         writer.SetKekulize(False)
