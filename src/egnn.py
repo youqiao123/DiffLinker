@@ -568,7 +568,8 @@ class DynamicsWithPockets(Dynamics):
 
         assert self.graph_type in ['4A', 'FC-4A', 'FC-10A-4A']
         if self.graph_type == '4A' or self.graph_type is None:
-            edges = self.get_dist_edges_4A(x, node_mask, edge_mask)
+            # edges = self.get_dist_edges_4A(x, node_mask, edge_mask)
+            edges = self.get_dist_edges_4A_new(x, node_mask, edge_mask)
         else:
             edges = self.get_dist_edges(x, node_mask, edge_mask, linker_mask, fragment_only_mask, pocket_only_mask)
 
@@ -671,4 +672,57 @@ class DynamicsWithPockets(Dynamics):
 
         adj = ligand_interactions | pocket_interactions | pocket_ligand_interactions
         edges = torch.stack(torch.where(adj))
+        return edges
+
+    @staticmethod
+    def get_dist_edges_4A_new(x, node_mask, batch_mask):
+        """
+        x         : (B*N, 3)
+        node_mask : (B*N, 1) or (B*N,)  -> padding 掩码
+        batch_mask: (B*N,)              -> 每个节点属于哪一个 batch 的 index
+        返回:
+            edges : (2, E) 的 LongTensor, 表示全局 flatten 后的边索引
+        """
+        device = x.device
+        node_mask = node_mask.squeeze().bool().to(device)
+        batch_mask = batch_mask.to(device)
+
+        # 只保留有效节点（去掉 padding）
+        valid_idx = torch.where(node_mask)[0]
+        if valid_idx.numel() == 0:
+            return torch.empty(2, 0, dtype=torch.long, device=device)
+
+        # x_valid = x[valid_idx]                  # (N_valid, 3)
+        batch_valid = batch_mask[valid_idx]     # (N_valid,)
+
+        rows_all = []
+        cols_all = []
+
+        # 按 batch 分块构造 4A 邻接
+        for b in batch_valid.unique():
+            idx_b = valid_idx[batch_valid == b]   # 这一 batch 内的全局索引
+            if idx_b.numel() <= 1:
+                continue
+
+            x_b = x[idx_b]                        # (n_b, 3)
+            # 局部 pairwise 距离矩阵 (n_b, n_b)，n_b <= num_atoms <= 1000
+            dist_b = torch.cdist(x_b, x_b)
+
+            # 4Å 内、非自环
+            adj_b = (dist_b <= 4)
+            adj_b.fill_diagonal_(False)
+
+            row_local, col_local = torch.where(adj_b)   # 在局部 (n_b, n_b) 上做 where
+
+            # 映射回全局索引
+            rows_all.append(idx_b[row_local])
+            cols_all.append(idx_b[col_local])
+
+        if not rows_all:
+            return torch.empty(2, 0, dtype=torch.long, device=device)
+
+        rows = torch.cat(rows_all, dim=0)
+        cols = torch.cat(cols_all, dim=0)
+        edges = torch.stack([rows, cols], dim=0)        # (2, E)
+
         return edges
