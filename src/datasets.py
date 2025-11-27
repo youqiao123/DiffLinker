@@ -456,7 +456,7 @@ def collate(batch):
 
     # In case of MOAD edge_mask is batch_idx
     if 'pocket_mask' in batch[0].keys():
-        batch_mask = torch.arange(batch_size, dtype=const.TORCH_INT).repeat_interleave(n_nodes)
+        batch_mask = torch.arange(batch_size, dtype=const.TORCH_INT, device=atom_mask.device).repeat_interleave(n_nodes)
         out['edge_mask'] = batch_mask
     else:
         # edge_mask = atom_mask[:, None, :] * atom_mask[:, :, None]

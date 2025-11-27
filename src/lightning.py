@@ -20,7 +20,7 @@ from src.datasets import (
     create_templates_for_linker_generation,
 )
 from src.linker_size import DistributionNodes
-from src.molecule_builder import build_molecules
+from src.molecule_builder import build_molecules_obabel, build_molecules
 from src.visualizer import save_xyz_file, visualize_chain
 from typing import Dict, List, Optional
 from tqdm import tqdm
@@ -502,16 +502,16 @@ class DDPM(pl.LightningModule):
                 fragment_mask = data['fragment_only_mask']
 
 
-            true_molecules_batch = build_molecules(
-                data['one_hot'].detach().cpu(),
-                data['positions'].detach().cpu(),
-                atom_mask.detach().cpu(),
+            true_molecules_batch = build_molecules_obabel(
+                data['one_hot'],
+                data['positions'],
+                atom_mask,
                 is_geom=self.is_geom,
             )
-            true_fragments_batch = build_molecules(
-                data['one_hot'].detach().cpu(),
-                data['positions'].detach().cpu(),
-                fragment_mask.detach().cpu(),
+            true_fragments_batch = build_molecules_obabel(
+                data['one_hot'],
+                data['positions'],
+                fragment_mask,
                 is_geom=self.is_geom,
             )
 
@@ -549,7 +549,8 @@ class DDPM(pl.LightningModule):
                     node_mask = (node_mask.bool() & (~pocket)).to(node_mask.dtype)
                     # node_mask = node_mask - data['pocket_mask']
 
-                pred_molecules_batch = build_molecules(
+                # 原来是build_molecules
+                pred_molecules_batch = build_molecules_obabel(
                     h['categorical'].detach().cpu(),
                     x.detach().cpu(),
                     node_mask.detach().cpu(),

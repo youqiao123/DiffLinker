@@ -129,9 +129,10 @@ def run(ligands_dir, output_table, output_conformers):
             if mol is None:
                 continue
 
-            # TODO 预处理 为什么要加这一步筛选？是怕分子量太大导致fragmentation时间过长吗？我把40改成60，2改成1
+            # TODO 预处理 为什么要加这一步筛选？是怕分子量太大导致fragmentation时间过长吗？我把40改成60，2改成1 我发现训练数据里面有多肽
             # 加了筛选，只有8万多数据
-            if mol.GetNumAtoms() <= 60 and mol.GetRingInfo().NumRings() >= 2:
+            # if mol.GetNumAtoms() <= 60 and mol.GetRingInfo().NumRings() >= 2:
+            if mol.GetNumAtoms() <= 60:
             # else:
                 try:
                     res_mmpa = fragment_by_mmpa(

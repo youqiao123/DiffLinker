@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-
+from openbabel import openbabel as ob
 from rdkit import Chem, Geometry
 
 from src import const
@@ -100,3 +100,77 @@ def get_bond_order(atom1, atom2, distance, check_exists=True, margins=const.MARG
                 return 2  # Double
         return 1  # Single
     return 0  # No bond
+
+def build_molecules_obabel(one_hot, positions, node_mask, is_geom=True):
+    if is_geom:
+        IDX2ATOMICNUM = {0: 6, 1: 8, 2: 7, 3: 9, 4: 16, 5: 17, 6: 35, 7: 53, 8: 15}
+    molecules = []
+    for i in range(len(one_hot)):
+        mask = node_mask[i].squeeze() == 1
+        atom_types = one_hot[i][mask].argmax(dim=1).detach().cpu()
+        atom_positions = positions[i][mask].detach().cpu().numpy()
+
+        obmol = ob.OBMol()
+        for a, (x,y,z) in zip(atom_types, atom_positions):
+            atom = obmol.NewAtom()
+            atom.SetAtomicNum(IDX2ATOMICNUM[a.item()])
+            atom.SetVector(x.item(), y.item(), z.item())  # 设置原子坐标
+        
+        obmol.ConnectTheDots()
+        obmol.PerceiveBondOrders()
+
+        rdkit_mol = obmol_to_rdkit_mol(obmol, keep_hydrogens=False, embed3d=True) 
+        molecules.append(rdkit_mol)
+    return molecules
+
+def obmol_to_rdkit_mol(obmol, keep_hydrogens=False, embed3d=True):
+    # 1. 构建一个空 RWMol
+    rdkit_mol = Chem.RWMol()
+
+    # 2. 原子映射：记录 OBMol 原子索引 -> RDKit atom idx
+    ob2rd = {}  # { ob_idx : rdkit_idx }
+
+    # 3. 遍历原子，添加到 RDKit 中
+    for ob_atom in ob.OBMolAtomIter(obmol):
+        atomic_num = ob_atom.GetAtomicNum()
+        if (not keep_hydrogens) and atomic_num == 1:
+            continue
+        a = Chem.Atom(atomic_num)
+        rd_idx = rdkit_mol.AddAtom(a)
+        ob2rd[ob_atom.GetIdx()] = rd_idx
+
+    # 4. 遍历 bond，添加到 RDKit 中
+    for ob_bond in ob.OBMolBondIter(obmol):
+        a1 = ob_bond.GetBeginAtomIdx()
+        a2 = ob_bond.GetEndAtomIdx()
+        if a1 not in ob2rd or a2 not in ob2rd:
+            continue
+        order = ob_bond.GetBondOrder()
+        # map OpenBabel bond order to RDKit bond type
+        if order == 1:
+            bt = Chem.BondType.SINGLE
+        elif order == 2:
+            bt = Chem.BondType.DOUBLE
+        elif order == 3:
+            bt = Chem.BondType.TRIPLE
+        else:
+            # 对于芳香键 (aromatic)，以及不常见键，可尝试设为 SINGLE + later kekulize/aromatic
+            bt = Chem.BondType.SINGLE
+        rdkit_mol.AddBond(ob2rd[a1], ob2rd[a2], bt)
+
+    # 5. 可选：把 OBMol 的 3D 坐标 copy 到 RDKit
+    if embed3d:
+        conf = Chem.Conformer(rdkit_mol.GetNumAtoms())
+        for ob_atom in ob.OBMolAtomIter(obmol):
+            idx = ob2rd.get(ob_atom.GetIdx(), None)
+            if idx is None:
+                continue
+            x, y, z = ob_atom.GetX(), ob_atom.GetY(), ob_atom.GetZ()
+            conf.SetAtomPosition(idx, Chem.rdGeometry.Point3D(x, y, z))
+        rdkit_mol.AddConformer(conf)
+
+    # 6. Sanitize / finalize
+    rdkit_mol = rdkit_mol.GetMol()
+    # Chem.SanitizeMol(rdkit_mol)
+
+    return rdkit_mol

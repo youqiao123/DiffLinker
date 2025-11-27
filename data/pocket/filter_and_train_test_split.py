@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 ALLOWED_TYPES = {'C', 'O', 'N', 'F', 'S', 'Cl', 'Br', 'I', 'P'}
 TEST_PDBS_PATH = '../../resources/moad_test_pdbs.txt'
-VAL_PDBS_PATH = '../../resources/moad_val_pdbs.txt'
+VAL_PDBS_PATH = '../../resources/pdbbind_val_pdbs.txt'
 
 
 def assign_dataset(name, test_pdbs, val_pdbs):
