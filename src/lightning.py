@@ -1,7 +1,6 @@
 import numpy as np
 import os
 import pytorch_lightning as pl
-from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
 import torch
 import wandb
@@ -190,13 +189,6 @@ class DDPM(pl.LightningModule):
                 device=dataset_device
             )
 
-        # elif stage == 'val':
-        #     self.is_geom = ('geom' in self.val_data_prefix) or ('MOAD' in self.val_data_prefix) or ('pdbbind' in self.train_data_prefix)
-        #     self.val_dataset = dataset_type(
-        #         data_path=self.data_path,
-        #         prefix=self.val_data_prefix,
-        #         device=self.torch_device
-        #     )
         else:
             raise NotImplementedError
     
@@ -207,10 +199,6 @@ class DDPM(pl.LightningModule):
             if isinstance(x, (list, tuple)): return type(x)(_move(v) for v in x)
             return x
         return _move(batch)
-    
-    # def on_after_move_to_device(self):
-    #     # 子模块（如 self.edm、任意自定义 nn.Module）一并放到同一设备
-    #     self.edm.to(self.device)
 
     def train_dataloader(self, collate_fn=collate):
         return self._create_dataloader(self.train_dataset, collate_fn=collate_fn, shuffle=True)
@@ -327,7 +315,7 @@ class DDPM(pl.LightningModule):
             for metric_name, metric in training_metrics.items():
                 metric_value = metric.detach().cpu() if isinstance(metric, torch.Tensor) else metric
                 self.metrics.setdefault(f'{metric_name}/train', []).append(metric_value)
-                self.log(f'{metric_name}/train', metric_value, prog_bar=True, rank_zero_only=True) # NOTE: for ddp
+                self.log(f'{metric_name}/train', metric_value, prog_bar=True) 
                 # self.log(f'{metric_name}/train', metric_value, prog_bar=True)
         detached_metrics = {
             metric_name: metric.detach().cpu() if isinstance(metric, torch.Tensor) else metric
@@ -344,8 +332,6 @@ class DDPM(pl.LightningModule):
 
 
     def validation_step(self, data, batch_idx, *args):
-        # self.print(f"[VAL_STEP] epoch={self.current_epoch} global_step={self.global_step} "
-        #            f"rank0={self.trainer.is_global_zero}")
         do_sampling = ((self.current_epoch + 1) % self.test_epochs == 0)
         return self._eval_step_common(data, stage='val', batch_idx=batch_idx, do_sampling=do_sampling)
 
@@ -366,7 +352,7 @@ class DDPM(pl.LightningModule):
         for metric in self._train_step_outputs[0].keys():
             avg_metric = self.aggregate_metric(self._train_step_outputs, metric)
             self.metrics.setdefault(f'{metric}/train', []).append(avg_metric)
-            self.log(f'{metric}/train', avg_metric, prog_bar=True, rank_zero_only=True) # NOTE: for ddp
+            self.log(f'{metric}/train', avg_metric, prog_bar=True) 
         self._train_step_outputs.clear()
 
     def on_validation_epoch_end(self):
@@ -383,7 +369,7 @@ class DDPM(pl.LightningModule):
 
         self._val_step_outputs.clear()
 
-        if self.trainer.is_global_zero and len(self._val_pred_mols) > 0:
+        if len(self._val_pred_mols) > 0:
             sampling_results = {
                 **metrics.compute_metrics(self._val_pred_mols, self._val_true_mols),
                 **delinker.get_delinker_metrics(self._val_pred_mols, self._val_true_mols, self._val_true_frags),
@@ -391,7 +377,7 @@ class DDPM(pl.LightningModule):
             for metric_name, metric_value in sampling_results.items():
                 # TODO: 修改run09报错
                 self.metrics.setdefault(f'{metric_name}/val', []).append(metric_value)
-                self.log(f'{metric_name}/val', metric_value, prog_bar=True, rank_zero_only=True)
+                self.log(f'{metric_name}/val', metric_value, prog_bar=True)
 
         if (self.current_epoch + 1) % self.test_epochs == 0:
             best_metrics, best_epoch = self.compute_best_validation_metrics()
@@ -411,20 +397,20 @@ class DDPM(pl.LightningModule):
         for metric in self._test_step_outputs[0].keys():
             avg_metric = self.aggregate_metric(self._test_step_outputs, metric)
             self.metrics.setdefault(f'{metric}/test', []).append(avg_metric)
-            self.log(f'{metric}/test', avg_metric, prog_bar=True, rank_zero_only=True)
+            self.log(f'{metric}/test', avg_metric, prog_bar=True)
 
         self._test_step_outputs.clear()
 
         # 2) 分子级采样指标：仅在 rank0、且确实做过采样时汇总
         # （前提：在 test_step 中你已用 do_sampling=True 调用了采样并把结果写入
         #  self._test_pred_mols / _test_true_mols / _test_true_frags）
-        if self.trainer.is_global_zero and len(getattr(self, "_test_pred_mols", [])) > 0:
+        if len(getattr(self, "_test_pred_mols", [])) > 0:
             sampling_results = {
                 **metrics.compute_metrics(self._test_pred_mols, self._test_true_mols),
                 **delinker.get_delinker_metrics(self._test_pred_mols, self._test_true_mols, self._test_true_frags),
             }
             for metric_name, metric_value in sampling_results.items():
-                self.log(f'{metric_name}/test', metric_value, prog_bar=True, rank_zero_only=True)
+                self.log(f'{metric_name}/test', metric_value, prog_bar=True)
                 self.metrics.setdefault(f'{metric_name}/test', []).append(metric_value)
 
             # 清空分子缓存，避免长占内存
@@ -492,8 +478,8 @@ class DDPM(pl.LightningModule):
         else:
             self._test_step_outputs.append(detached)
 
-        # ===== 2) 仅在周期到达时做：采样/结构指标 =====
-        if do_sampling and self.trainer.is_global_zero:
+        # 仅在周期到达时做：采样/结构指标
+        if do_sampling:
             atom_mask = data['atom_mask']
             fragment_mask = data['fragment_mask']
             if '.' in self.train_data_prefix:
@@ -590,89 +576,6 @@ class DDPM(pl.LightningModule):
     
         return metrics_dict
 
-    # def sample_and_analyze(self, dataloader):
-    #     pred_molecules = []
-    #     true_molecules = []
-    #     true_fragments = []
-
-    #     for b, data in tqdm(enumerate(dataloader), total=len(dataloader), desc='Sampling'):
-    #         atom_mask = data['atom_mask']
-    #         fragment_mask = data['fragment_mask']
-
-    #         # Save molecules without pockets
-    #         if '.' in self.train_data_prefix:
-    #             atom_mask = data['atom_mask'] - data['pocket_mask']
-    #             fragment_mask = data['fragment_only_mask']
-
-    #         true_molecules_batch = build_molecules(
-    #             data['one_hot'],
-    #             data['positions'],
-    #             atom_mask,
-    #             is_geom=self.is_geom,
-    #         )
-    #         true_fragments_batch = build_molecules(
-    #             data['one_hot'],
-    #             data['positions'],
-    #             fragment_mask,
-    #             is_geom=self.is_geom,
-    #         )
-
-    #         for sample_idx in tqdm(range(self.n_stability_samples)):
-    #             try:
-    #                 chain_batch, node_mask = self.sample_chain(data, keep_frames=self.FRAMES)
-    #             except utils.FoundNaNException as e:
-    #                 for idx in e.x_h_nan_idx:
-    #                     smiles = data['name'][idx]
-    #                     print(f'FoundNaNException: [xh], e={self.current_epoch}, b={b}, i={idx}: {smiles}')
-    #                 for idx in e.only_x_nan_idx:
-    #                     smiles = data['name'][idx]
-    #                     print(f'FoundNaNException: [x ], e={self.current_epoch}, b={b}, i={idx}: {smiles}')
-    #                 for idx in e.only_h_nan_idx:
-    #                     smiles = data['name'][idx]
-    #                     print(f'FoundNaNException: [ h], e={self.current_epoch}, b={b}, i={idx}: {smiles}')
-    #                 continue
-
-    #             # Get final molecules from chains – for computing metrics
-    #             x, h = utils.split_features(
-    #                 z=chain_batch[0],
-    #                 n_dims=self.n_dims,
-    #                 num_classes=self.num_classes,
-    #                 include_charges=self.include_charges,
-    #             )
-
-    #             # Save molecules without pockets
-    #             if '.' in self.train_data_prefix:
-    #                 node_mask = node_mask - data['pocket_mask']
-
-    #             one_hot = h['categorical']
-    #             pred_molecules_batch = build_molecules(one_hot, x, node_mask, is_geom=self.is_geom)
-
-    #             # Adding only results for valid ground truth molecules
-    #             for pred_mol, true_mol, frag in zip(pred_molecules_batch, true_molecules_batch, true_fragments_batch):
-    #                 if metrics.is_valid(true_mol):
-    #                     pred_molecules.append(pred_mol)
-    #                     true_molecules.append(true_mol)
-    #                     true_fragments.append(frag)
-
-    #             # Generate animation – will always do it for molecules with idx 0, 110 and 360
-    #             if self.samples_dir is not None and sample_idx == 0:
-    #                 self.generate_animation(chain_batch=chain_batch, node_mask=node_mask, batch_i=b)
-
-    #     # Our own & DeLinker metrics
-    #     our_metrics = metrics.compute_metrics(
-    #         pred_molecules=pred_molecules,
-    #         true_molecules=true_molecules
-    #     )
-    #     delinker_metrics = delinker.get_delinker_metrics(
-    #         pred_molecules=pred_molecules,
-    #         true_molecules=true_molecules,
-    #         true_fragments=true_fragments
-    #     )
-    #     return {
-    #         **our_metrics,
-    #         **delinker_metrics
-    #     }
-
     def sample_chain(self, data, sample_fn=None, keep_frames=None):
         if sample_fn is None:
             linker_sizes = data['linker_mask'].sum(1).view(-1).int()
@@ -761,24 +664,6 @@ class DDPM(pl.LightningModule):
     # @staticmethod
     # def aggregate_metric(step_outputs, metric):
     #     return torch.tensor([out[metric] for out in step_outputs]).mean()
-
-    # @staticmethod
-    # def aggregate_metric(step_outputs, metric):
-    #     values = [out[metric] for out in step_outputs if metric in out]
-    #     if not values:
-    #         return torch.tensor(0.0)
-
-    #     tensors = []
-    #     for v in values:
-    #         if isinstance(v, torch.Tensor):
-    #             v = v.detach()
-    #             if v.numel() != 1:
-    #                 v = v.mean()
-    #         else:  # float or int
-    #             v = torch.tensor(v, dtype=torch.float32)
-    #         tensors.append(v.reshape(()))
-
-    #     return torch.stack(tensors).mean()
 
     @staticmethod
     def aggregate_metric(step_outputs, metric):
