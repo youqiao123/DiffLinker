@@ -1,5 +1,6 @@
 import argparse
 import os
+from pathlib import Path
 import pandas as pd
 import subprocess
 
@@ -12,15 +13,15 @@ from pdb import set_trace
 parser = argparse.ArgumentParser()
 parser.add_argument('--samples', action='store', type=str, required=True)
 parser.add_argument('--checkpoint', action='store', type=str, required=True)
-parser.add_argument('--dataset', action='store', type=str, required=True)
-parser.add_argument('--true_smiles_path', action='store', type=str, required=True)
+parser.add_argument('--dataset_type', action='store', type=str, required=True)
+parser.add_argument('--test_table_path', action='store', type=str, required=True)
 parser.add_argument('--formatted', action='store', type=str, required=True)
 parser.add_argument('--linker_size_model_name', action='store', type=str, required=False, default=None)
 
 
 def load_rdkit_molecule(xyz_path, obabel_path, true_frag_smi):
     if not os.path.exists(obabel_path):
-        subprocess.run(f'obabel {xyz_path} -O {obabel_path}', shell=True)
+        subprocess.run(f'obabel {xyz_path} -O {obabel_path}', stderr=subprocess.DEVNULL, shell=True)
 
     supp = Chem.SDMolSupplier(obabel_path, sanitize=False)
     mol = list(supp)[0]
@@ -95,30 +96,65 @@ def load_sampled_dataset(folder, idx2true_mol_smi, idx2true_frag_smi):
 
     return pred_mols, pred_mols_smi, pred_link_smi, true_mols_smi, true_frags_smi, uuids
 
+def make_uuid_file(samples_dir:Path, out_path:Path):
+    # samples_dir, out_dir = Path(samples_dir), Path(out_dir)
+    if not samples_dir.exists():
+        raise FileNotFoundError(f"samples_dir not found: {str(samples_dir)}")
 
-def reformat(samples, dataset, true_smiles_path, checkpoint, formatted, linker_size_model_name):
-    true_smiles_path = os.path.join(true_smiles_path)
+    names = [n for n in samples_dir.iterdir() if n.name.isdigit()]
+    ids = sorted([int(n.name.split('_')[0]) if '_' in n.name else int(n.name) for n in names])
+
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, 'w') as fw:
+        for i in ids:
+            fw.write(f"{i}\n")
+
+# def make_true_smi_file(table_path:Path, out_path:Path, mol_col='molecule', frag_col='fragments'):
+#     if not table_path.exists():
+#         raise FileNotFoundError(f"Table file not found: {table_path}")
+#     df = pd.read_csv(str(table_path))
+#     if mol_col not in df.columns or frag_col not in df.columns:
+#         raise KeyError(f"Expected columns '{mol_col}' and '{frag_col}' in {table_path}. Found: {list(df.columns)}")
+    
+#     with open(out_path, 'w') as fw:
+#         for _, r in df.iterrows():
+#             fw.write(f"{r[mol_col]} {r[frag_col]}\n")
+#     print(f"Wrote test smiles to {out_path}")
+
+
+def reformat(samples, dataset, table_path, checkpoint, formatted, linker_size_model_name):
+    samples = Path(samples)
+    formatted = Path(formatted)
+    # table_path = Path(table_path)
+    checkpoint = Path(checkpoint).stem
+
     if linker_size_model_name is None:
-        input_path = os.path.join(samples, dataset, checkpoint)
-        formatted_output_dir = os.path.join(formatted, checkpoint)
-        out_smi_path = os.path.join(formatted_output_dir, f'{dataset}.smi')
-        out_sdf_path = os.path.join(formatted_output_dir, f'{dataset}.sdf')
+        input_path = samples / dataset / checkpoint
+        formatted_output_dir = formatted / checkpoint
     else:
-        input_path = os.path.join(samples, dataset, 'sampled_size', linker_size_model_name, checkpoint)
-        formatted_output_dir = os.path.join(formatted, checkpoint, 'sampled_size', linker_size_model_name)
-        out_smi_path = os.path.join(formatted_output_dir, f'{dataset}.smi')
-        out_sdf_path = os.path.join(formatted_output_dir, f'{dataset}.sdf')
+        linker_size_model_name = Path(linker_size_model_name).stem
+        input_path = samples / dataset / "sampled_size" / linker_size_model_name / checkpoint
+        formatted_output_dir = formatted / checkpoint / "sampled_size" / linker_size_model_name
 
-    print(f'Sampled SMILES will be saved to {out_smi_path}')
-    print(f'Sampled molecules will be saved to {out_sdf_path}')
+    out_smi_path = formatted_output_dir / f"{dataset}.smi"
+    out_sdf_path = formatted_output_dir / f"{dataset}.sdf"
 
-    true_smiles_table = pd.read_csv(true_smiles_path, sep=' ', names=['molecule', 'fragments'])
+    print(f"Sampled SMILES will be saved to {out_smi_path}")
+    print(f"Sampled molecules will be saved to {out_sdf_path}")
+
+    true_smiles_table = pd.read_csv(table_path, usecols=['molecule', 'fragments'])
+
     dataset_lower = dataset.lower()
+
     if ('moad' in dataset_lower) or ('pdbbind' in dataset_lower):
         import numpy as np
-        uuids = np.loadtxt(os.path.join(formatted, dataset.split('.')[0], 'uuids.txt'), dtype=int)
-        idx2true_mol_smi = dict(zip(uuids, true_smiles_table.molecule.values))
-        idx2true_frag_smi = dict(zip(uuids, true_smiles_table.fragments.values))
+        uuid_path = formatted / dataset.split('.')[0] / "uuids.txt"
+        if not uuid_path.exists():
+            make_uuid_file(input_path, uuid_path)
+
+        uuids = np.loadtxt(str(uuid_path), dtype=int)
+        idx2true_mol_smi = dict(zip(uuids, true_smiles_table['molecule'].values))
+        idx2true_frag_smi = dict(zip(uuids, true_smiles_table['fragments'].values))
     else:
         idx2true_mol_smi = dict(enumerate(true_smiles_table.molecule.values))
         idx2true_frag_smi = dict(enumerate(true_smiles_table.fragments.values))
@@ -129,23 +165,26 @@ def reformat(samples, dataset, true_smiles_path, checkpoint, formatted, linker_s
         idx2true_frag_smi=idx2true_frag_smi,
     )
 
-    os.makedirs(formatted_output_dir, exist_ok=True)
-    with open(out_smi_path, 'w') as f:
-        for i in range(len(pred_mols_smi)):
-            f.write(f'{true_frag_smi[i]} {true_mols_smi[i]} {pred_mols_smi[i]} {pred_link_smi[i]} {uuids[i]}\n')
+    formatted_output_dir.mkdir(parents=True, exist_ok=True)
 
-    with Chem.SDWriter(open(out_sdf_path, 'w')) as writer:
+    with out_smi_path.open('w') as f:
+        for i in range(len(pred_mols_smi)):
+            f.write(
+                f"{true_frag_smi[i]} {true_mols_smi[i]} "
+                f"{pred_mols_smi[i]} {pred_link_smi[i]} {uuids[i]}\n"
+            )
+
+    with Chem.SDWriter(str(out_sdf_path)) as writer:
         for mol in pred_mols:
             writer.write(mol)
-
 
 if __name__ == '__main__':
     disable_rdkit_logging()
     args = parser.parse_args()
     reformat(
         samples=args.samples,
-        dataset=args.dataset,
-        true_smiles_path=args.true_smiles_path,
+        dataset=args.dataset_type,
+        table_path=args.test_table_path,
         checkpoint=args.checkpoint,
         formatted=args.formatted,
         linker_size_model_name=args.linker_size_model_name,

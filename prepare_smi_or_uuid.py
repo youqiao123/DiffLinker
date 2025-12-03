@@ -71,7 +71,7 @@ def main():
     p3 = sub.add_parser('make_uuids')
     p3.add_argument('--samples_dir', required=True, help='Path to samples/<dataset>/<checkpoint> directory')
     p3.add_argument('--dataset_prefix', required=True, help='Dataset prefix used in sampling e.g. pdbbind_test.full')
-    p3.add_argument('--out_dir', required=True, help='Formatted output dir, e.g. formatted')
+    p3.add_argument('--out_dir', default='formatted', help='Formatted output dir, e.g. formatted')
 
     args = parser.parse_args()
     if args.cmd is None:

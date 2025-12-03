@@ -214,6 +214,10 @@ mkdir -p trajectories
 If you want to sample 250 linkers for each input set of fragments, run the following:
 ```shell
 export CKPT_PATH=models/pockets_difflinker_pdbbind_qianyouqiao_pockets_difflinker_pdbbind_bs32_date12-11_time01-06-23.405860/pockets_difflinker_pdbbind_qianyouqiao_pockets_difflinker_pdbbind_bs32_date12-11_time01-06-23.405860_epoch=464.ckpt
+
+export CKPT_PATH=models/pockets_difflinker_full_fc_pdb_excluded.ckpt
+export CKPT_PATH=models/epoch_385.ckpt
+
 python -W ignore sample.py \
                  --checkpoint $CKPT_PATH \
                  --linker_size_model models/zinc_size_gnn.ckpt \
@@ -226,14 +230,15 @@ python -W ignore sample.py \
 You will be able to see `.xyz` files of the generated molecules in the directory `./samples`.
 
 如果对已有的数据集进行采样，则不需要提供linker_size_model，默认会使用数据集中真实的linker_size
-
+```shell
 python -W ignore sample.py \
-                 --checkpoint $CKPT_PATH \
+                 --checkpoint models/epoch_330.ckpt \
                  --samples samples \
-                 --data ../pdbbind_processed_3 \
+                 --data datasets \
                  --prefix pdbbind_test.full \
-                 --n_samples 2 \
-                 --device cuda:0
+                 --n_samples 10 \
+                 --device cuda:1
+```
 
 If you want to sample linkers and save trajectories, run the following:
 ```shell
@@ -265,24 +270,24 @@ Next, you need to run OpenBabel to reformat the data:
 mkdir -p formatted
 python -W ignore reformat_data_obabel.py \
                  --samples samples \
-                 --dataset pdbbind_test.full \
-                 --true_smiles_path /home/qianyouqiao/pdbbind_processed_3/pdbbind_test_smiles.smi \
-                 --checkpoint $CKPT_PATH \
+                 --dataset_type pdbbind_test.full \
+                 --test_table_path /home/qianyouqiao/pdbbind_processed_2/pdbbind_test_table.csv \
+                 --checkpoint models/epoch_350.ckpt \
                  --formatted formatted 
 ```
 
 Then you can run evaluation scripts:
 ```shell
-export WANDB_MODE=disabled
 python -W ignore compute_metrics.py \
                  pdbbind \
-                 formatted/pdbbind_1/pdbbind_test.full.smi \
+                 formatted/epoch_340/pdbbind_test.full.smi \
                  datasets/pdbbind_train_link.smi \
                  8 \
                  True \
-                 100 \
+                 None \
                  resources/wehi_pains.csv \
-                 diffusion
+                 diffusion \
+                 datasets
 ```
 All the metrics will be saved in the directory `./formatted`.
 
@@ -291,9 +296,10 @@ python evaluate_ckpt.py \
                  --checkpoint $CKPT_PATH \
                  --dataset-name pdbbind \
                  --dataset-prefix pdbbind_test.full \
-                 --test-table ../pdbbind_processed_3/pdbbind_test_table.csv \
-                 --train-linkers-sdf ../pdbbind_processed_3/pdbbind_train_link.sdf
-                 #  --experiment-name pdbbind_2 \ 一般不需要设置experiment-name，除非想再采样一次来评估。
+                 --test-table ../pdbbind_processed_2/pdbbind_test_table.csv \
+                 --train-linkers-sdf ../pdbbind_processed_2/pdbbind_train_link.sdf
+                 # --experiment-name pdbbind_2 \ 一般不需要设置experiment-name，除非想再采样一次来评估。
+                 # --dataset-path /home/qianyouqiao/pdbbind_procesesed_2 # 如果需要采样，则需要提供包含测试数据的dataset_path
 ```
 
 

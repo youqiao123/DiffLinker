@@ -98,6 +98,8 @@ def _maybe_sample(args: argparse.Namespace, experiment_name: str) -> None:
         args.samples_dir,
         "--prefix",
         args.dataset_prefix,
+        "--data",
+        args.dataset_path,
         "--n_samples",
         str(args.n_samples),
         "--device",
@@ -171,13 +173,14 @@ def main() -> None:
     parser.add_argument("--checkpoint", required=True, help="Path to the trained .ckpt file")
     parser.add_argument("--dataset-name", required=True, help="Name passed to compute_metrics (e.g. ZINC, CASF, pdbbind)")
     parser.add_argument("--dataset-prefix", required=True, help="Prefix used during sampling (e.g. pdbbind_test.full)")
+    parser.add_argument("--dataset-path", default='/home/qianyouqiao/pdbbind_processed_2')
     
     parser.add_argument("--experiment-name", default=None, help="Optional name for this evaluation run. Defaults to the checkpoint name")
     
     parser.add_argument("--samples-dir", default="samples", help="Directory to store sampling outputs")
     parser.add_argument("--formatted-dir", default="formatted", help="Directory for formatted evaluation files")
     parser.add_argument("--data-path", default=None, help="Optional override for the dataset root passed to sample.py")
-    parser.add_argument("--n-samples", type=int, default=50, help="Number of samples per molecule")
+    parser.add_argument("--n-samples", type=int, default=2, help="Number of samples per molecule")
     parser.add_argument("--device", default="cuda:0", help="Torch device used during sampling")
     parser.add_argument("--n-steps", type=int, default=None, help="Optional diffusion steps override for sampling")
 

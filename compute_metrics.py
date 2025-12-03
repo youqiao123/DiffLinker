@@ -18,7 +18,7 @@ from pdb import set_trace
 
 disable_rdkit_logging()
 
-if len(sys.argv) != 9:
+if len(sys.argv) != 10:
     print("Not provided all arguments")
     quit()
 
@@ -33,6 +33,7 @@ else:
     restrict = int(sys.argv[6])  # Set to None if don't want to restrict
 pains_smarts_loc = sys.argv[7]  # Path to PAINS SMARTS
 method = sys.argv[8]
+datasets = sys.argv[9]
 assert method in ['diffusion', '3dlinker', 'delinker']
 
 if verbose:
@@ -68,7 +69,26 @@ summary = {}
 
 # -------------- Validity -------------- #
 
-def is_valid(pred_mol_smiles, frag_smiles):
+def neutralize_charges(mol):
+    patterns = (
+        ('[n+;H]', 'n'), 
+        ('[N+;!H0]', 'N'),
+        ('[$([O-]);!$([O-][#7])]', 'O'),
+        ('[S-]', 'S'),
+        ('[$([N-]);!$([N-][#6]=O)]', 'N'),
+    )
+    replaced = False
+    for patt, rep in patterns:
+        while mol.HasSubstructMatch(Chem.MolFromSmarts(patt)):
+            rms = Chem.ReplaceSubstructs(mol, Chem.MolFromSmarts(patt),
+                                         Chem.MolFromSmarts(rep), replaceAll=False)
+            mol = rms[0]
+            replaced = True
+    if replaced:
+        Chem.SanitizeMol(mol)
+    return mol
+
+def is_valid(pred_mol_smiles, frag_smiles, if_neutralize=True):
     pred_mol = Chem.MolFromSmiles(pred_mol_smiles)
     frag = Chem.MolFromSmiles(frag_smiles)
     if frag is None:
@@ -79,6 +99,9 @@ def is_valid(pred_mol_smiles, frag_smiles):
         Chem.SanitizeMol(pred_mol, sanitizeOps=Chem.SanitizeFlags.SANITIZE_PROPERTIES)
     except Exception:
         return False
+    if if_neutralize:
+        pred_mol = neutralize_charges(pred_mol)
+        frag = neutralize_charges(frag)
     if len(pred_mol.GetSubstructMatch(frag)) != frag.GetNumAtoms():
         return False
     return True
@@ -313,44 +336,16 @@ summary_table.to_csv(summary_path, index=False)
 
 sdf_path = gen_smi_file[:-3] + 'sdf'
 pred_mol_3d = Chem.SDMolSupplier(sdf_path)
-datasets = os.environ['DATASET_PATH']
 
-if method == 'diffusion' and data_set == 'ZINC':
-    # Use SMILES of test set generated for molecules processed by OpenBabel
-    # (for consistency with other evaluation metrics)
-    # Because SMILES produced by our model are also based on OpenBabel
-    true_smi_path = f'{datasets}/zinc_final_test_smiles.smi'
-    true_mol_path = f'{datasets}/zinc_final_test_molecules.sdf'
-    true_smi = pd.read_csv(true_smi_path, sep=' ', names=['mol', 'frag']).mol.values
-    true_mol_3d = Chem.SDMolSupplier(true_mol_path)
-    true_smi2mol3d = dict(zip(true_smi, true_mol_3d))
-elif method == 'diffusion' and data_set == 'CASF':
-    # Use SMILES of test set generated for molecules processed by OpenBabel
-    # (for consistency with other evaluation metrics)
-    # Because SMILES produced by our model are also based on OpenBabel
-    true_smi_path = f'{datasets}/casf_final_test_smiles.smi'
-    true_mol_path = f'{datasets}/casf_final_test_molecules.sdf'
-    true_smi = pd.read_csv(true_smi_path, sep=' ', names=['mol', 'frag']).mol.values
-    true_mol_3d = Chem.SDMolSupplier(true_mol_path)
-    true_smi2mol3d = dict(zip(true_smi, true_mol_3d))
-elif method == 'diffusion' and data_set == 'GEOM':
-    # Use SMILES of test set generated for molecules processed by OpenBabel
-    # (for consistency with other evaluation metrics)
-    # Because SMILES produced by our model are also based on OpenBabel
-    true_smi_path = f'{datasets}/geom_multifrag_test_smiles.smi'
-    true_mol_path = f'{datasets}/geom_multifrag_test_molecules.sdf'
-    true_smi = pd.read_csv(true_smi_path, sep=' ', names=['mol', 'frag']).mol.values
-    true_mol_3d = Chem.SDMolSupplier(true_mol_path)
-    true_smi2mol3d = dict(zip(true_smi, true_mol_3d))
-elif method == 'diffusion' and data_set in ['MOAD', 'pdbbind']:
+if method == 'diffusion' and data_set in ['MOAD', 'pdbbind']:
     # Use SMILES of test set generated for molecules processed by OpenBabel
     # (for consistency with other evaluation metrics)
     # Because SMILES produced by our model are also based on OpenBabel
     prefix = 'MOAD' if data_set == 'MOAD' else 'pdbbind'
-    true_smi_path = f'{datasets}/{prefix}_test_smiles.smi'
+    true_smi_path = f'{datasets}/{prefix}_test_table.csv'
     # true_mol_path = f'datasets/{prefix}_test_molecules.sdf'
     true_mol_path = f'{datasets}/{prefix}_test_mol.sdf'
-    true_smi = pd.read_csv(true_smi_path, sep=' ', names=['mol', 'frag']).mol.values
+    true_smi = pd.read_csv(true_smi_path, usecols=['molecule'])['molecule'].values
     true_mol_3d = Chem.SDMolSupplier(true_mol_path)
     true_smi2mol3d = dict(zip(true_smi, true_mol_3d))
 else:
@@ -366,6 +361,7 @@ def find_exit(mol, num_frag):
                 neighbors.append(n.GetIdx())
     return neighbors
 
+if_neutralize = False
 
 rmsd_list = []
 for i, (obj, pred) in tqdm(enumerate(zip(data, pred_mol_3d)), total=len(data)):
@@ -377,33 +373,64 @@ for i, (obj, pred) in tqdm(enumerate(zip(data, pred_mol_3d)), total=len(data)):
 
     Chem.RemoveStereochemistry(true)
     true = Chem.RemoveHs(true)
-
     Chem.RemoveStereochemistry(pred)
     pred = Chem.RemoveHs(pred)
+
+    if if_neutralize:
+        true = neutralize_charges(true)
+        pred = neutralize_charges(pred)
 
     G1 = frag_utils.topology_from_rdkit(pred)
     G2 = frag_utils.topology_from_rdkit(true)
     GM = isomorphism.GraphMatcher(G1, G2)
-    flag = GM.is_isomorphic()
-    frag_size = Chem.MolFromSmiles(obj['fragments']).GetNumAtoms()
-    # exits = find_exit(pred, frag_size)
 
-    # if flag and len(exits) == 2:
-    if flag:
-        error = Chem.rdMolAlign.GetBestRMS(pred, true)
-        # try:
-        #     error = Chem.rdMolAlign.GetBestRMS(pred, true)
-        # except:
-        #     set_trace()
-        num_linker = pred.GetNumAtoms() - frag_size
-        num_atoms = pred.GetNumAtoms()
-        error *= np.sqrt(num_atoms / num_linker)  # only count rmsd on linker
-        rmsd_list.append(error)
-        obj['rmsd'] = error
+    if not GM.is_isomorphic():
+        continue
+    # 1. 取出一个 isomorphism；注意一定要用 next(...)
+    mapping = next(GM.isomorphisms_iter())  # dict: {pred_idx -> true_idx}
+
+    # 2. 显式构造成 list[tuple[int,int]]，并转成 Python int
+    atom_map = [(int(pred_idx), int(true_idx))
+                for pred_idx, true_idx in mapping.items()]
+    
+    map_param = [atom_map]
+
+    # 这里就不会再报 “No sub-structure match found”
+    error = Chem.rdMolAlign.GetBestRMS(pred, true, map=map_param)
+
+    frag_size = Chem.MolFromSmiles(obj['fragments']).GetNumAtoms()
+    num_linker = pred.GetNumAtoms() - frag_size
+    num_atoms = pred.GetNumAtoms()
+    if num_linker <= 0:
+        continue
+
+    error *= np.sqrt(num_atoms / num_linker)  # 只统计 linker 的 RMSD
+    rmsd_list.append(error)
+    obj['rmsd'] = error
 
 rmsd_score = np.mean(rmsd_list)
 print(f'Mean RMSD: {rmsd_score:.3f}')
 summary['rmsd'] = rmsd_score
+#     flag = GM.is_isomorphic()
+#     frag_size = Chem.MolFromSmiles(obj['fragments']).GetNumAtoms()
+#     # exits = find_exit(pred, frag_size)
+
+#     # if flag and len(exits) == 2:
+#     if flag:
+#         error = Chem.rdMolAlign.GetBestRMS(pred, true)
+#         # try:
+#         #     error = Chem.rdMolAlign.GetBestRMS(pred, true)
+#         # except:
+#         #     set_trace()
+#         num_linker = pred.GetNumAtoms() - frag_size
+#         num_atoms = pred.GetNumAtoms()
+#         error *= np.sqrt(num_atoms / num_linker)  # only count rmsd on linker
+#         rmsd_list.append(error)
+#         obj['rmsd'] = error
+
+# rmsd_score = np.mean(rmsd_list)
+# print(f'Mean RMSD: {rmsd_score:.3f}')
+# summary['rmsd'] = rmsd_score
 
 # ----------------------------- SC-RDKit -------------------------- #
 

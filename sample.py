@@ -7,10 +7,19 @@ from src import utils
 from src.lightning import DDPM
 from src.linker_size_lightning import SizeClassifier
 from src.visualizer import save_xyz_file
-from src.datasets import collate, collate_with_fragment_edges, MOADDataset, DiffLinkerDataModule
+from src.datasets import (
+    collate,
+    collate_with_fragment_edges,
+    DiffLinkerDataModule
+)
 from tqdm import tqdm
 
 from pdb import set_trace
+
+
+# -------------------------
+# 采样脚本主体
+# -------------------------
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--checkpoint', action='store', type=str, required=True)
@@ -39,18 +48,25 @@ def check_if_generated(_output_dir, _uuids, n_samples):
     starting_points = []
     for _uuid in _uuids:
         uuid_dir = os.path.join(_output_dir, _uuid)
+        if not os.path.exists(uuid_dir):
+            generated = False
+            starting_points.append(0)
+            continue
+
         numbers = []
         for fname in os.listdir(uuid_dir):
             try:
                 num = int(fname.split('_')[0])
                 numbers.append(num)
-            except:
+            except Exception:
                 continue
+
         if len(numbers) == 0 or max(numbers) != n_samples - 1:
             generated = False
             if len(numbers) == 0:
                 starting_points.append(0)
             else:
+                # 原始代码就是 max(numbers) - 1，这里保持不变
                 starting_points.append(max(numbers) - 1)
 
     if len(starting_points) > 0:
@@ -61,8 +77,13 @@ def check_if_generated(_output_dir, _uuids, n_samples):
     return generated, starting
 
 
+# -------------------------
+# linker size 相关（如果有）
+# -------------------------
 collate_fn = collate
 sample_fn = None
+size_nn = None
+
 if args.linker_size_model is not None:
     size_nn = SizeClassifier.load_from_checkpoint(args.linker_size_model, map_location=args.device)
     size_nn = size_nn.eval().to(args.device)
@@ -80,44 +101,48 @@ if args.linker_size_model is not None:
         sizes = torch.tensor(sizes, device=samples.device, dtype=torch.long)
         return sizes
 
-# Loading model form checkpoint (all hparams will be automatically set)
+
+# -------------------------
+# 加载模型
+# -------------------------
 model = DDPM.load_from_checkpoint(args.checkpoint, map_location=args.device)
+model = model.eval().to(args.device)
+model.torch_device = args.device
 
-# Possibility to evaluate on different datasets (e.g., on CASF instead of ZINC)
-model.val_data_prefix = args.prefix
+# 采样阶段视作 test 阶段：用 test_data_prefix 指定要采样的数据
+datamodule = DiffLinkerDataModule(
+    data_path=args.data,
+    train_data_prefix=None,
+    val_data_prefix=None,
+    test_data_prefix=args.prefix,
+    batch_size=16,
+    dataset_device='cpu',
+    collate_fn=collate_fn,
+    num_workers=4,
+)
 
-# In case <Anonymous> will run my model or vice versa
-if args.data is not None:
-    model.data_path = args.data
+datamodule.prepare_data()
+datamodule.setup(stage='test')
+dataloader = datamodule.test_dataloader()
+print(f'Dataloader contains {len(dataloader)} batches')
 
-# Less sampling steps
+# 关键：为了兼容 DiffLinker 里写死的 isinstance(model.val_dataset, MOADDataset) 等逻辑，
+# 我们把 test_dataset 显式挂到 model.val_dataset 上。
+model.val_dataset = datamodule.test_dataset
+
+# 如果想减少采样步数
 if args.n_steps is not None:
     model.edm.T = args.n_steps
 
-# Setting up the model
-# model = model.eval().to(args.device)
-# model.torch_device = args.device
-# model.setup(stage='val')
-model = DDPM.load_from_checkpoint(args.checkpoint, map_location=args.device)
-
-# Getting the dataloader
-datamodule = DiffLinkerDataModule(
-    data_path=args.data,
-    test_data_prefix=args.prefix,
-    batch_size=8,
-    num_workers=4,
-    dataset_device='cpu'
-)
-datamodule.setup(stage='test')
-dataloader = datamodule.test_dataloader()
-# dataloader = model.val_dataloader(collate_fn=collate_fn)
-print(f'Dataloader contains {len(dataloader)} batches')
-
+# -------------------------
+# 采样主循环
+# -------------------------
 for batch_idx, data in enumerate(dataloader):
+    # 把 batch 转到设备
     data = model.transfer_batch_to_device(
         data,
         device=args.device,
-        dataloader_idx=0,  # 这里只有一个 dataloader，用 0 即可
+        dataloader_idx=0,
     )
 
     uuids = []
@@ -136,45 +161,69 @@ for batch_idx, data in enumerate(dataloader):
     if generated:
         print(f'Already generated batch={batch_idx}, max_uuid={max(uuids)}')
         continue
+    if starting_point is None:
+        starting_point = 0
     if starting_point > 0:
         print(f'Generating {args.n_samples - starting_point} for batch={batch_idx}')
 
-    # Removing COM of fragment from the atom coordinates
-    h, x, node_mask, frag_mask = data['one_hot'], data['positions'], data['atom_mask'], data['fragment_mask']
+    # -------------------------
+    # 去中心：优先使用 fragment_only_mask / fragment_mask / anchors
+    # -------------------------
+    h = data['one_hot']
+    x = data['positions']
+    node_mask = data['atom_mask']
+    frag_mask = data['fragment_mask']
+
     if model.inpainting:
         center_of_mass_mask = node_mask
-    if isinstance(model.val_dataset, MOADDataset) and model.center_of_mass == 'fragments':
-        center_of_mass_mask = data['fragment_only_mask']
-    elif model.center_of_mass == 'fragments':
-        center_of_mass_mask = data['fragment_mask']
-    elif model.center_of_mass == 'anchors':
-        center_of_mass_mask = data['anchors']
     else:
-        raise NotImplementedError(model.center_of_mass)
+        # 与原始逻辑保持一致，只是改成看 batch 字段而不是 model.val_dataset 类型
+        if ('fragment_only_mask' in data) and model.center_of_mass == 'fragments':
+            center_of_mass_mask = data['fragment_only_mask']
+        elif model.center_of_mass == 'fragments':
+            center_of_mass_mask = data['fragment_mask']
+        elif model.center_of_mass == 'anchors':
+            center_of_mass_mask = data['anchors']
+        else:
+            raise NotImplementedError(model.center_of_mass)
+
     x = utils.remove_partial_mean_with_mask(x, node_mask, center_of_mass_mask)
     utils.assert_partial_mean_zero_with_mask(x, node_mask, center_of_mass_mask)
 
-    # Saving pocket if applicable
-    if isinstance(model.val_dataset, MOADDataset):
-        node_mask = data['atom_mask'] - data['pocket_mask']
-        frag_mask = data['fragment_only_mask']
+    # -------------------------
+    # 根据 batch 是否包含 pocket_mask 判断是否有 pocket
+    # -------------------------
+    has_pocket = 'pocket_mask' in data
+
+    if has_pocket:
         pock_mask = data['pocket_mask']
+        # ligand = atom_mask - pocket_mask
+        ligand_mask = node_mask - pock_mask
+        # MOAD 的 fragment_only_mask 通常是纯 fragment
+        if 'fragment_only_mask' in data:
+            frag_mask = data['fragment_only_mask']
+        # 保存 pocket
         save_xyz_file(output_dir, h, x, pock_mask, pock_names, is_geom=model.is_geom)
+    else:
+        ligand_mask = node_mask
+        # frag_mask 已从 data['fragment_mask'] 读取
 
-    # Saving ground-truth molecules
-    save_xyz_file(output_dir, h, x, node_mask, true_names, is_geom=model.is_geom)
+    # 保存 ground-truth 的 ligand（不包括 pocket）
+    save_xyz_file(output_dir, h, x, ligand_mask, true_names, is_geom=model.is_geom)
 
-    # Saving fragments
+    # 保存 fragment
     save_xyz_file(output_dir, h, x, frag_mask, frag_names, is_geom=model.is_geom)
 
-    # Sampling and saving generated molecules
+    # -------------------------
+    # 采样并保存预测结果（同样剔除 pocket）
+    # -------------------------
     for i in tqdm(range(starting_point, args.n_samples), desc=str(batch_idx)):
-        chain, node_mask = model.sample_chain(data, sample_fn=sample_fn, keep_frames=1)
-        x = chain[0][:, :, :model.n_dims]
-        h = chain[0][:, :, model.n_dims:]
+        chain, gen_node_mask = model.sample_chain(data, sample_fn=sample_fn, keep_frames=1)
+        gen_x = chain[0][:, :, :model.n_dims]
+        gen_h = chain[0][:, :, model.n_dims:]
 
-        if isinstance(model.val_dataset, MOADDataset):
-            node_mask = node_mask - data['pocket_mask']
+        if has_pocket:
+            gen_node_mask = gen_node_mask - data['pocket_mask']
 
         pred_names = [f'{uuid}/{i}' for uuid in uuids]
-        save_xyz_file(output_dir, h, x, node_mask, pred_names, is_geom=model.is_geom)
+        save_xyz_file(output_dir, gen_h, gen_x, gen_node_mask, pred_names, is_geom=model.is_geom)

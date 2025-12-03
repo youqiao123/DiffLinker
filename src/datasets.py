@@ -473,54 +473,6 @@ def collate(batch):
 
     return out
 
-# def collate(batch):
-#     out = {}
-
-#     # Filter out big molecules
-#     if 'pocket_mask' not in batch[0].keys():
-#        batch = [data for data in batch if data['num_atoms'] <= 50]
-#     else:
-#        # TODO：用protac数据训练的时候这一条要去掉！
-#        batch = [data for data in batch if data['num_atoms'] <= 1000]
-
-#     for data in batch:
-#         for key, value in data.items():
-#             out.setdefault(key, []).append(value)
-
-#     for key, value in out.items():
-#         if key in const.DATA_LIST_ATTRS:
-#             continue
-#         if key in const.DATA_ATTRS_TO_PAD:
-#             # NOTE: 瓶颈似乎真在这里，某些epoch处理速度特别慢，内存消耗可能也很大
-#             out[key] = torch.nn.utils.rnn.pad_sequence(value, batch_first=True, padding_value=0)
-#             # print(1)
-#             continue
-#         raise Exception(f'Unknown batch key: {key}')
-
-#     atom_mask = (out['fragment_mask'].bool() | out['linker_mask'].bool()).to(const.TORCH_INT)
-#     out['atom_mask'] = atom_mask[:, :, None]
-
-#     batch_size, n_nodes = atom_mask.size()
-
-#     # In case of MOAD edge_mask is batch_idx
-#     if 'pocket_mask' in batch[0].keys():
-#         batch_mask = torch.arange(batch_size, dtype=const.TORCH_INT).repeat_interleave(n_nodes)
-#         out['edge_mask'] = batch_mask
-#     else:
-#         # edge_mask = atom_mask[:, None, :] * atom_mask[:, :, None]
-#         # diag_mask = ~torch.eye(edge_mask.size(1), dtype=const.TORCH_INT, device=atom_mask.device).unsqueeze(0)
-#         # edge_mask *= diag_mask
-#         # out['edge_mask'] = edge_mask.view(batch_size * n_nodes * n_nodes, 1)
-#         edge_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
-#         edge_mask.diagonal(dim1=1, dim2=2).zero_()
-#         out['edge_mask'] = edge_mask.view(batch_size * n_nodes * n_nodes, 1)
-
-#     for key in const.DATA_ATTRS_TO_ADD_LAST_DIM:
-#         if key in out.keys():
-#             out[key] = out[key][:, :, None]
-
-#     return out
-
 
 def collate_with_fragment_edges(batch):
     out = {}
