@@ -44,7 +44,7 @@ def main(args):
 
     is_geom = any(
         token in args.train_data_prefix
-        for token in ('geom', 'MOAD', 'pdbbind')
+        for token in ('geom', 'MOAD', 'pdbbind', 'protac')
     )
     loss_weights = None
 

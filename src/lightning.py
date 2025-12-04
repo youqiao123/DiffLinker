@@ -80,7 +80,12 @@ class DDPM(pl.LightningModule):
         self.include_charges = include_charges
         self.anchors_context = anchors_context
 
-        self.is_geom = ('geom' in self.train_data_prefix) or ('MOAD' in self.train_data_prefix) or ('pdbbind' in self.train_data_prefix)
+        self.is_geom = (
+            ('geom' in self.train_data_prefix) 
+            or ('MOAD' in self.train_data_prefix) 
+            or ('pdbbind' in self.train_data_prefix)
+            or ('protac' in self.train_data_prefix)
+        )
 
         if graph_type is None:
             graph_type = '4A' if '.' in train_data_prefix else 'FC'
@@ -138,6 +143,7 @@ class DDPM(pl.LightningModule):
                     ('geom' in self.train_data_prefix)
                     or ('MOAD' in self.train_data_prefix)
                     or ('pdbbind' in self.train_data_prefix)
+                    or ('protac' in self.train_data_prefix)
                 )
             if stage in (None, 'val', 'validate'):
                 self.val_dataset = getattr(datamodule, 'val_dataset', self.val_dataset)
@@ -146,6 +152,7 @@ class DDPM(pl.LightningModule):
                         ('geom' in self.val_data_prefix)
                         or ('MOAD' in self.val_data_prefix)
                         or ('pdbbind' in self.val_data_prefix)
+                        or ('protac' in self.train_data_prefix)
                     )
             if stage in (None, 'test', 'predict'):
                 self.test_dataset = getattr(datamodule, 'test_dataset', None)
@@ -161,6 +168,7 @@ class DDPM(pl.LightningModule):
                 ('geom' in self.train_data_prefix)
                 or ('MOAD' in self.train_data_prefix)
                 or ('pdbbind' in self.train_data_prefix)
+                or ('protac' in self.train_data_prefix)
             )
             self.train_dataset = dataset_type(
                 data_path=self.data_path,
@@ -182,6 +190,7 @@ class DDPM(pl.LightningModule):
                 ('geom' in self.val_data_prefix)
                 or ('MOAD' in self.val_data_prefix)
                 or ('pdbbind' in self.val_data_prefix)
+                or ('protac' in self.train_data_prefix)
             )
             self.val_dataset = dataset_type(
                 data_path=self.data_path,

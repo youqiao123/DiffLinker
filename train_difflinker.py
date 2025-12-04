@@ -66,6 +66,7 @@ def main(args):
         ('geom' in args.train_data_prefix)
         or ('MOAD' in args.train_data_prefix)
         or ('pdbbind' in args.train_data_prefix)
+        or ('protac' in args.train_data_prefix)
     )
     number_of_atoms = GEOM_NUMBER_OF_ATOM_TYPES if is_geom else NUMBER_OF_ATOM_TYPES
     in_node_nf = number_of_atoms + args.include_charges
@@ -134,14 +135,33 @@ def main(args):
         accelerator='gpu',
         devices='auto',
         num_sanity_val_steps=0,
-        enable_progress_bar=args.enable_progress_bar,
-        # strategy='ddp', # at h800
+        enable_progress_bar=args.enable_progress_bar
     )
 
     if args.resume is None:
         last_checkpoint = None
+        trainer = Trainer(
+            max_epochs=args.n_epochs,
+            logger=wandb_logger,
+            callbacks=checkpoint_callback,
+            accelerator='gpu',
+            devices='auto',
+            num_sanity_val_steps=0,
+            enable_progress_bar=args.enable_progress_bar
+        )
     else:
         last_checkpoint = find_last_checkpoint(checkpoints_dir)
+        trainer = Trainer(
+            max_epochs=args.n_epochs,
+            logger=wandb_logger,
+            callbacks=checkpoint_callback,
+            accelerator='gpu',
+            devices='auto',
+            num_sanity_val_steps=0,
+            enable_progress_bar=args.enable_progress_bar,
+            gradient_clip_val=0.5,
+            gradient_clip_algorithm="norm"
+        )
         print(f'Training will be resumed from the latest checkpoint {last_checkpoint}')
 
     print('Start training')

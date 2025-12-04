@@ -151,10 +151,10 @@ mkdir -p logs
 
 Run trainig:
 ```shell
-export CUDA_VISIBLE_DEVICES=7
+export CUDA_VISIBLE_DEVICES=3
 nohup python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml > run13.log 2>&1 &
 python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml > run13.log 2>&1 &
-python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml
+python -W ignore train_difflinker.py --config configs/resume_difflinker.yml
 
 
 slurm_submit -n diff -p gpu -c 24 -g 2 'python -W ignore train_difflinker.py --config configs/pockets_difflinker_pdbbind.yml'

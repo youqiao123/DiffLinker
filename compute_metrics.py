@@ -337,11 +337,12 @@ summary_table.to_csv(summary_path, index=False)
 sdf_path = gen_smi_file[:-3] + 'sdf'
 pred_mol_3d = Chem.SDMolSupplier(sdf_path)
 
-if method == 'diffusion' and data_set in ['MOAD', 'pdbbind']:
+if method == 'diffusion' and data_set in ['MOAD', 'pdbbind', 'protac']:
     # Use SMILES of test set generated for molecules processed by OpenBabel
     # (for consistency with other evaluation metrics)
     # Because SMILES produced by our model are also based on OpenBabel
-    prefix = 'MOAD' if data_set == 'MOAD' else 'pdbbind'
+    # prefix = 'MOAD' if data_set == 'MOAD' else 'pdbbind'
+    prefix = data_set
     true_smi_path = f'{datasets}/{prefix}_test_table.csv'
     # true_mol_path = f'datasets/{prefix}_test_molecules.sdf'
     true_mol_path = f'{datasets}/{prefix}_test_mol.sdf'

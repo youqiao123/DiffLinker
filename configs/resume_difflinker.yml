@@ -1,7 +1,7 @@
 exp_name: 'protac_resume_epoch340'
-data: /home/qianyouqiao/pdbbind_processed_2
-train_data_prefix: pdbbind_train.full
-val_data_prefix: pdbbind_val.full
+data: /home/qianyouqiao/protac_dataset
+train_data_prefix: protac_train.full
+val_data_prefix: protac_val.full
 checkpoints: models
 logs: logs
 device: gpu
@@ -10,7 +10,7 @@ wandb_entity: null
 enable_progress_bar: False
   
 model: egnn_dynamics
-lr: 1.0e-4
+lr: 1.0e-5
 batch_size: 32
 n_layers: 6
 n_epochs: 800

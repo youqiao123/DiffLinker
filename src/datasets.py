@@ -86,6 +86,7 @@ class ZincDataset(Dataset):
             ('geom' in prefix)
             or ('MOAD' in prefix)
             or ('pdbbind' in prefix)
+            or ('protac' in prefix)
         )
         is_multifrag = 'multifrag' in prefix
 
